@@ -20,6 +20,25 @@ import { ExpressionSyntaxError } from './lexer.ts';
 export type ExpressionValue = number | boolean;
 export type VariableBindings = ReadonlyMap<string, number>;
 
+/**
+ * What every node of an expression evaluated to, keyed by the node itself.
+ *
+ * This is how a payslip explains itself. The alternative -- a second walker that
+ * re-derives the arithmetic for display -- is two implementations of the same
+ * rule that can disagree, and the one on screen would be the one nobody tests.
+ * Recording during the real evaluation makes the explanation a byproduct of the
+ * number rather than a claim about it.
+ *
+ * Nodes never evaluated are simply absent, which is itself worth showing: a
+ * branch of an if() that was not taken did not contribute, and saying so is more
+ * honest than printing the value it would have had.
+ *
+ * Node objects are compared by identity. The AST cache below shares one tree
+ * across every employee in a payrun, so a record must not outlive the single
+ * evaluation it was passed to.
+ */
+export type EvaluationRecord = Map<Node, ExpressionValue>;
+
 export class ExpressionEvaluationError extends Error {
   constructor(message: string) {
     super(message);
@@ -70,7 +89,22 @@ function requireBoolean(value: ExpressionValue, context: string): boolean {
   return value;
 }
 
-function evaluateNode(node: Node, bindings: VariableBindings): ExpressionValue {
+function evaluateNode(
+  node: Node,
+  bindings: VariableBindings,
+  record?: EvaluationRecord,
+): ExpressionValue {
+  const value = computeNode(node, bindings, record);
+  record?.set(node, value);
+  return value;
+}
+
+/** The evaluation itself. Recording is done by its caller, in one place. */
+function computeNode(
+  node: Node,
+  bindings: VariableBindings,
+  record?: EvaluationRecord,
+): ExpressionValue {
   switch (node.type) {
     case 'number':
     case 'boolean':
@@ -88,7 +122,7 @@ function evaluateNode(node: Node, bindings: VariableBindings): ExpressionValue {
     }
 
     case 'unary': {
-      const operand = evaluateNode(node.operand, bindings);
+      const operand = evaluateNode(node.operand, bindings, record);
       if (node.operator === '-') {
         return -requireNumber(operand, "Negation ('-')");
       }
@@ -96,38 +130,39 @@ function evaluateNode(node: Node, bindings: VariableBindings): ExpressionValue {
     }
 
     case 'binary':
-      return evaluateBinary(node, bindings);
+      return evaluateBinary(node, bindings, record);
 
     case 'conditional': {
       const condition = requireBoolean(
-        evaluateNode(node.condition, bindings),
+        evaluateNode(node.condition, bindings, record),
         'A conditional expression',
       );
-      return evaluateNode(condition ? node.whenTrue : node.whenFalse, bindings);
+      return evaluateNode(condition ? node.whenTrue : node.whenFalse, bindings, record);
     }
 
     case 'call':
-      return evaluateCall(node, bindings);
+      return evaluateCall(node, bindings, record);
   }
 }
 
 function evaluateBinary(
   node: Extract<Node, { type: 'binary' }>,
   bindings: VariableBindings,
+  record?: EvaluationRecord,
 ): ExpressionValue {
   const { operator } = node;
 
   // Boolean operators short-circuit, so the right side may legitimately be
   // undefined-ish work we never want to do.
   if (operator === 'and' || operator === 'or') {
-    const left = requireBoolean(evaluateNode(node.left, bindings), `'${operator}'`);
+    const left = requireBoolean(evaluateNode(node.left, bindings, record), `'${operator}'`);
     if (operator === 'and' && !left) return false;
     if (operator === 'or' && left) return true;
-    return requireBoolean(evaluateNode(node.right, bindings), `'${operator}'`);
+    return requireBoolean(evaluateNode(node.right, bindings, record), `'${operator}'`);
   }
 
-  const left = evaluateNode(node.left, bindings);
-  const right = evaluateNode(node.right, bindings);
+  const left = evaluateNode(node.left, bindings, record);
+  const right = evaluateNode(node.right, bindings, record);
 
   if (operator === '==') return left === right;
   if (operator === '!=') return left !== right;
@@ -158,6 +193,7 @@ function evaluateBinary(
 function evaluateCall(
   node: Extract<Node, { type: 'call' }>,
   bindings: VariableBindings,
+  record?: EvaluationRecord,
 ): ExpressionValue {
   if (node.name === CONDITIONAL_FUNCTION) {
     if (node.args.length !== 3) {
@@ -166,10 +202,10 @@ function evaluateCall(
       );
     }
     const condition = requireBoolean(
-      evaluateNode(node.args[0] as Node, bindings),
+      evaluateNode(node.args[0] as Node, bindings, record),
       "The first argument of if()",
     );
-    return evaluateNode(node.args[condition ? 1 : 2] as Node, bindings);
+    return evaluateNode(node.args[condition ? 1 : 2] as Node, bindings, record);
   }
 
   const builtin = FUNCTIONS[node.name];
@@ -191,7 +227,10 @@ function evaluateCall(
   }
 
   const args = node.args.map((argument, position) =>
-    requireNumber(evaluateNode(argument, bindings), `Argument ${position + 1} of ${node.name}()`),
+    requireNumber(
+      evaluateNode(argument, bindings, record),
+      `Argument ${position + 1} of ${node.name}()`,
+    ),
   );
 
   const result = builtin.apply(args);
@@ -268,10 +307,28 @@ function parseCached(source: string): Node {
   return ast;
 }
 
+/**
+ * Evaluates an expression and hands back the tree and what each node produced.
+ *
+ * A separate entry point rather than an extra argument on the two existing ones,
+ * so the payrun path -- which runs this thousands of times and wants none of it
+ * -- allocates no Map and is not asked to pass undefined.
+ */
+export function evaluateWithTrace(
+  source: string,
+  bindings: VariableBindings,
+  label: string,
+): { value: ExpressionValue; ast: Node; record: EvaluationRecord } {
+  const record: EvaluationRecord = new Map();
+  const value = evaluateExpression(source, bindings, label, record);
+  return { value, ast: parseCached(source), record };
+}
+
 function evaluateExpression(
   source: string,
   bindings: VariableBindings,
   label: string,
+  record?: EvaluationRecord,
 ): ExpressionValue {
   let ast: Node;
 
@@ -289,7 +346,7 @@ function evaluateExpression(
   }
 
   try {
-    const value = evaluateNode(ast, bindings);
+    const value = evaluateNode(ast, bindings, record);
     if (typeof value === 'number' && !Number.isFinite(value)) {
       throw new ExpressionEvaluationError('The expression produced a value that is not a number.');
     }

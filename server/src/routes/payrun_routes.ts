@@ -16,6 +16,7 @@ import { parseOrThrow, validateBody } from '../middleware/validate.ts';
 import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
 import { payrunCreateInput, payrunScopeInput } from '../../../shared/schemas/payroll.ts';
 import { computePayrun } from '../services/payroll/payslip_service.ts';
+import { explainPayslip } from '../services/payroll/explain.ts';
 import type { PayrunRow } from '../services/payroll/payslip_service.ts';
 import {
   createPayrun,
@@ -458,6 +459,32 @@ payslips.get('/:id/pdf', 'payrun:read', async (request, response) => {
     `inline; filename="${data.number.replace(/\//g, '-')}.pdf"`,
   );
   response.send(pdf);
+});
+
+/**
+ * The arithmetic behind one payslip.
+ *
+ * Guarded by requireOwnEmployee like the payslip itself rather than by a
+ * payroll-only permission: the person best served by an explanation of a number
+ * is the person it was paid to. An employee can already read this payslip, and
+ * showing them how it was reached reveals nothing further about anyone else.
+ */
+payslips.get('/:id/explain', 'payrun:read', async (request, response) => {
+  const id = parseOrThrow(identifier, request.params.id);
+
+  const owner = await queryOne<{ employee_id: number }>(
+    'SELECT employee_id FROM payslips WHERE id = $1',
+    [id],
+  );
+  if (owner === null) {
+    throw notFound('Payslip', id);
+  }
+  requireOwnEmployee(request, owner.employee_id);
+
+  // Read-only, so no transaction: the pool helpers already satisfy the shape the
+  // service asks for, and wrapping this in BEGIN/COMMIT would hold a connection
+  // for a screen that only reads.
+  response.json(await explainPayslip({ query, queryOne }, id));
 });
 
 export const payslipRouter = payslips.router;

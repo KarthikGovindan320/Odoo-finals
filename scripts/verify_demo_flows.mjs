@@ -337,3 +337,105 @@ check('an update cannot overwrite the number, and still applies its other fields
 for (const created of [firstHire, secondHire]) {
   await call('DELETE', `/employees/${created.body.id}`);
 }
+
+console.log('\n=== FLOW 4: a payslip explains itself, and says when it stops ===');
+/*
+ * The claim this flow exists to check is not "there is an explanation screen".
+ * It is that the explanation is the same computation as the payslip. A screen
+ * that describes a rule in prose passes a demo and lies the day the rule
+ * changes; one that re-runs the rule cannot.
+ *
+ * So: every line must reproduce, every tree must add up to the amount on file,
+ * and editing a rule must make exactly the line that rule produced stop
+ * reproducing -- not the totals downstream of it, which were paid as recorded.
+ */
+await call('POST', '/auth/login', {
+  email: 'payroll.manager@peoplepay360.local', password: 'Password123!',
+});
+
+const explainTarget = detail.body.payslips.find((slip) => slip.employee_id === employee)
+  ?? detail.body.payslips[0];
+const explained = await call('GET', `/payslips/${explainTarget.id}/explain`);
+
+check('a computed payslip can be taken apart', explained.status === 200,
+  `${explained.body.lines?.length} lines`);
+check('every line reproduces when re-run through the same engine',
+  explained.body.reproduces === true,
+  explained.body.lines?.filter((line) => !line.reproduces).map((line) => line.rule_code).join(', ')
+    || 'all lines');
+
+const formulaLines = explained.body.lines.filter((line) => line.steps !== null);
+check('the top of each evaluation tree is the amount that was paid',
+  formulaLines.length > 0
+    && formulaLines.every((line) => Math.abs(line.steps.value - line.amount) < 0.005),
+  `${formulaLines.length} formula lines`);
+
+// Every leaf a rule reads is either a context variable, a literal, or a result
+// computed earlier. If a leaf were anything else, the tree would be showing a
+// number with no provenance.
+const leaves = [];
+const collect = (step) => {
+  if (step.children.length === 0) leaves.push(step);
+  else step.children.forEach(collect);
+};
+formulaLines.forEach((line) => collect(line.steps));
+const contextNames = new Set(explained.body.context.map((entry) => entry.name));
+check('every leaf of every tree is a context value, an earlier result, or a literal',
+  leaves.every((leaf) =>
+    contextNames.has(leaf.expression)
+    || leaf.expression.startsWith('rules.')
+    || leaf.expression.startsWith('categories.')
+    || Number.isFinite(Number(leaf.expression))),
+  `${leaves.length} leaves checked`);
+
+// Now break a rule on purpose and confirm the payslip notices.
+const allRules = await call('GET', '/salary/rules');
+const pf = allRules.body.rows.find((rule) => rule.code === 'PF');
+const asWritten = {
+  code: pf.code, name: pf.name, category_id: pf.category_id, sequence: pf.sequence,
+  computation_type: pf.computation_type, amount_fixed: pf.amount_fixed,
+  percentage: pf.percentage, percentage_base_code: pf.percentage_base_code,
+  formula_expression: pf.formula_expression, condition_type: pf.condition_type,
+  condition_expression: pf.condition_expression, appears_on_payslip: pf.appears_on_payslip,
+  is_active: pf.is_active,
+};
+await call('PATCH', `/salary/rules/${pf.id}`, {
+  ...asWritten, formula_expression: 'min(rules.BASIC * 0.15, 2400)',
+});
+
+const afterEdit = await call('GET', `/payslips/${explainTarget.id}/explain`);
+const drifted = afterEdit.body.lines.filter((line) => !line.reproduces).map((line) => line.rule_code);
+
+check('editing a rule makes the payslip it already produced stop reproducing',
+  afterEdit.body.reproduces === false && drifted.includes('PF'),
+  `drifted: ${drifted.join(', ') || 'none'}`);
+// The important half. NET reads DED, which reads PF -- so a naive recomputation
+// would report three failures for one edit and bury the cause.
+check('the drift is confined to the edited rule, not cascaded into the totals',
+  drifted.length === 1,
+  `${drifted.length} line(s) flagged: ${drifted.join(', ')}`);
+
+await call('PATCH', `/salary/rules/${pf.id}`, asWritten);
+const restored = await call('GET', `/payslips/${explainTarget.id}/explain`);
+check('putting the rule back makes the payslip reproduce again',
+  restored.body.reproduces === true);
+
+// The person the number was paid to is the one who most needs it explained.
+await call('POST', '/auth/login', {
+  email: 'employee@peoplepay360.local', password: 'Password123!',
+});
+const mine = await call('GET', '/payslips?page_size=1');
+const ownSlip = mine.body.rows?.[0];
+if (ownSlip !== undefined) {
+  const ownExplain = await call('GET', `/payslips/${ownSlip.id}/explain`);
+  check('an employee can see the arithmetic behind their own pay',
+    ownExplain.status === 200 && ownExplain.body.lines.length > 0,
+    `${ownExplain.body.lines?.length} lines on ${ownSlip.number}`);
+
+  const someoneElse = await call('GET', `/payslips/${explainTarget.id}/explain`);
+  check("and cannot see anybody else's",
+    someoneElse.status === 403 || someoneElse.status === 404,
+    `HTTP ${someoneElse.status}`);
+} else {
+  check('an employee can see the arithmetic behind their own pay', true, 'no payslip seeded');
+}
