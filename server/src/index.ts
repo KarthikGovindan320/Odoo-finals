@@ -17,10 +17,34 @@ async function main(): Promise<void> {
     console.log(`peoplepay360 api listening on http://localhost:${config.port} (${config.nodeEnv})`);
   });
 
+  // Give in-flight requests a moment to finish, then stop waiting. server.close()
+  // alone waits for every keep-alive connection to drain, which one idle browser
+  // tab can postpone indefinitely -- so a deploy hangs rather than restarts.
+  const SHUTDOWN_GRACE_MS = 10_000;
+  let shuttingDown = false;
+
   const shutdown = (signal: string): void => {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
     console.log(`\n${signal} received, shutting down`);
+
+    const forceExit = setTimeout(() => {
+      console.error(`[shutdown] still busy after ${SHUTDOWN_GRACE_MS}ms, closing anyway`);
+      server.closeAllConnections();
+    }, SHUTDOWN_GRACE_MS);
+    forceExit.unref();
+
     server.close(() => {
-      void closePool().then(() => process.exit(0));
+      clearTimeout(forceExit);
+      void closePool().then(
+        () => process.exit(0),
+        (error: unknown) => {
+          console.error('[shutdown] pool did not close cleanly:', error);
+          process.exit(1);
+        },
+      );
     });
   };
 
