@@ -16,7 +16,8 @@ export type IconName =
   | 'clock'
   | 'calendar'
   | 'wallet'
-  | 'receipt';
+  | 'receipt'
+  | 'fingerprint';
 
 const PATHS: Record<IconName, React.ReactNode> = {
   // A sheet with ruled lines and a signature stroke: a signed agreement.
@@ -52,6 +53,17 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <rect x="2.75" y="5" width="14.5" height="11" rx="2" />
       <path d="M2.75 8.5h14.5" />
       <circle cx="13.75" cy="12" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+
+  // Concentric ridges: the reader, not a finger.
+  fingerprint: (
+    <>
+      <path d="M10 9.5v3.2" />
+      <path d="M7.2 8.6a3 3 0 0 1 5.6 0v3.1a3.4 3.4 0 0 1-.5 1.8" />
+      <path d="M4.6 8.1a5.6 5.6 0 0 1 10.8 0v3.4a6 6 0 0 1-.7 2.8" />
+      <path d="M5.1 14.9A6 6 0 0 0 5.8 12" />
+      <path d="M2.6 6.4a8.6 8.6 0 0 1 14.8 0" />
     </>
   ),
 

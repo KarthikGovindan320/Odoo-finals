@@ -17,6 +17,8 @@ import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { TextAreaField, TextField } from '../components/Field.tsx';
 import { fromLocalInput, toLocalInput } from '../lib/timezone.ts';
+import { readBiometricPreference, writeBiometricPreference } from '../lib/biometric.ts';
+import { Icon } from '../components/Icon.tsx';
 
 type AttendanceRow = {
   id: number; employee_id: number; employee_name: string;
@@ -240,6 +242,21 @@ function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Employee view only. HR, payroll and admin all hold attendance:write at
+  // scope 'all' and are themselves linked to employee records, so they see this
+  // bar too -- holding the permission is not the same question as "is this my
+  // own attendance screen". The scope is what separates the two.
+  const { scopeOf } = useAuth();
+  const isOwnView = scopeOf('attendance:write') === 'own';
+
+  // Presentation only, and deliberately so: there is no reader attached, and
+  // the attendance record written is identical either way. What the toggle
+  // changes is how the punch is offered -- which is the half of a biometric
+  // rollout that exists before the hardware does. Wiring a real device means
+  // replacing the punch() call below, not this flag.
+  const [biometric, setBiometric] = useState(readBiometricPreference);
+  const scanning = biometric && isOwnView;
+
   const current: OpenPunch = open.data?.rows[0] ?? null;
 
   const punch = async (): Promise<void> => {
@@ -263,8 +280,10 @@ function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: 
     }
   };
 
+  const action = current === null ? 'Check in' : 'Check out';
+
   return (
-    <div className="punch">
+    <div className={`punch${scanning ? ' punch--biometric' : ''}`}>
       <div className="punch__state">
         {current === null ? (
           <span className="muted">Not checked in.</span>
@@ -275,13 +294,34 @@ function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: 
           </span>
         )}
       </div>
+
+      {/* A toggle button rather than a checkbox: it turns a mode on and off and
+          shows its own state, which is what aria-pressed is for. */}
+      {isOwnView && (
+        <button
+          type="button"
+          className={`punch__toggle${biometric ? ' punch__toggle--on' : ''}`}
+          aria-pressed={biometric}
+          onClick={() => {
+            const next = !biometric;
+            setBiometric(next);
+            writeBiometricPreference(next);
+          }}
+        >
+          <Icon name="fingerprint" />
+          Biometric Attendance
+          <span className="punch__toggle-state">{biometric ? 'On' : 'Off'}</span>
+        </button>
+      )}
+
       <button
         className={current === null ? 'btn btn--primary' : 'btn'}
         onClick={() => void punch()}
         disabled={busy || open.loading}
       >
-        {busy ? 'Recording…' : current === null ? 'Check in' : 'Check out'}
+        {busy ? 'Recording…' : scanning ? `Scan to ${action.toLowerCase()}` : action}
       </button>
+
       {error !== null && <span className="field__error" role="alert">{error}</span>}
     </div>
   );

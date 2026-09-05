@@ -850,3 +850,36 @@ a:hover { text-decoration: underline; }
 @media (prefers-reduced-motion: reduce) {
   .splash { transition-duration: 200ms; }
 }
+
+/* A mode toggle inside the punch bar. Shown only where the punch bar is, which
+   is the employee's own view of attendance -- HR and payroll see the list. */
+.punch__toggle {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--text-2);
+  font: inherit; font-size: var(--size-sm); cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.punch__toggle:hover { border-color: var(--accent); color: var(--accent-ink); }
+.punch__toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.punch__toggle--on {
+  background: var(--accent-wash);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+/* The state is spelled out, not left to the fill alone -- a pressed pill and an
+   unpressed one are the same shape, and colour is the only other difference. */
+.punch__toggle-state {
+  font-family: var(--font-mono); font-size: var(--size-micro);
+  text-transform: uppercase; letter-spacing: var(--track-label);
+  padding: 1px 6px; border-radius: 3px;
+  background: var(--surface-2); color: var(--text-3);
+}
+.punch__toggle--on .punch__toggle-state { background: var(--accent); color: #fff; }
+
+/* In biometric mode the bar leads with the reader rather than the clock. */
+.punch--biometric { border-left-color: var(--petrol); }
