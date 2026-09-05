@@ -102,15 +102,6 @@
   --series-5: #5f5aa8;  /* violet    */
   --series-6: #8a6a12;  /* bronze    */
 
-  /* ── Attendance composition ───────────────────────────────────────────────
-   * The four outcomes a scheduled day can have. Ordered as they stack, so the
-   * pairs that sit against each other are the pairs that had to separate.
-   * Validated as its own adjacent set, not assumed from the series order. */
-  --attend-present: #0b7fa3;
-  --attend-paid:    #7a5cc4;
-  --attend-unpaid:  #c4551a;
-  --attend-absent:  #8e2f5e;
-
   /* ── Type ─────────────────────────────────────────────────────────────── */
   --font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
     'Helvetica Neue', Arial, sans-serif;

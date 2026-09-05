@@ -13,8 +13,6 @@ import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.t
 import { useAuth } from '../lib/auth.tsx';
 import { useBackTo } from '../lib/use_back_to.ts';
 import { Badge, DetailRow, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
-import { AttendanceComposition } from '../components/AttendanceComposition.tsx';
-import type { AttendanceSummary } from '../components/AttendanceComposition.tsx';
 import { EmployeeFormModal } from './EmployeeFormModal.tsx';
 
 type EmployeeDetail = {
@@ -46,7 +44,6 @@ export function EmployeeDetailPage() {
 
   const { data, loading, error, reload } = useResource<EmployeeDetail>(`/employees/${id}`);
   const balances = useResource<{ rows: Balance[] }>(`/time-off/balances?employee_id=${id}`);
-  const attendance = useResource<AttendanceSummary>(`/employees/${id}/attendance-summary`);
 
   if (loading) return <div className="loading">Loading employee…</div>;
   if (error !== null) return <div className="error-box">{error}</div>;
@@ -137,16 +134,6 @@ export function EmployeeDetailPage() {
           </dl>
         </Panel>
       </div>
-
-      <Panel title="Attendance — last 90 days">
-        {attendance.error !== null ? (
-          <p className="muted" style={{ margin: 0 }}>{attendance.error}</p>
-        ) : attendance.data === null ? (
-          <div className="loading">Loading…</div>
-        ) : (
-          <AttendanceComposition data={attendance.data} />
-        )}
-      </Panel>
 
       <Panel title="Leave balances" flush>
         {balances.data === null || balances.data.rows.length === 0 ? (

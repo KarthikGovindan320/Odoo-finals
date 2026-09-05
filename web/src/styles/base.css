@@ -778,48 +778,81 @@ a:hover { text-decoration: underline; }
   .reference-block__row { grid-template-columns: 1fr; gap: 0; }
 }
 
-/* ══ Attendance composition ══════════════════════════════════════════════
- * One bar, thin, with the figures beside it. The bar summarises; the numbers
- * are what gets read, because for most people three of the four are 0 or 1. */
+/* ══ Pre-login splash ════════════════════════════════════════════════════
+ * Sits over the login form for one session and slides up off the top to
+ * reveal it. Covering rather than replacing means the form is already there
+ * when the splash leaves, so nothing mounts into the gap. */
 
-.composition { display: flex; flex-direction: column; gap: var(--space-3); }
-
-.composition__bar {
-  display: flex;
-  height: 12px;
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--line-soft);
-  /* A hairline of surface between segments, so two fills never touch and a
-     boundary is visible even where the colours are close. */
-  gap: 2px;
-}
-.composition__segment { display: block; min-width: 3px; }
-
-.composition__key {
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: var(--space-2) var(--space-4);
+  place-items: center;
+  cursor: pointer;
+  background: linear-gradient(158deg, var(--ink-700) 0%, var(--ink-900) 58%, #0a2c2a 100%);
+  color: var(--text-on-dark);
+  transform: translateY(0);
+  transition: transform 700ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+.splash:focus { outline: none; }
+.splash:focus-visible { outline: 3px solid var(--gold); outline-offset: -3px; }
+
+.splash--leaving { transform: translateY(-100%); }
+
+.splash__content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  text-align: center;
+  padding: var(--space-5);
+  max-width: 44ch;
+}
+
+.splash__mark {
+  display: grid; place-items: center;
+  width: 44px; height: 44px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-family: var(--font-mono); font-size: 15px; font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.splash__name {
   margin: 0;
-}
-.composition__item { display: flex; flex-direction: column; gap: 2px; }
-.composition__item--empty { opacity: 0.55; }
-.composition__item dt {
-  display: flex; align-items: center; gap: var(--space-2);
-  font-size: var(--size-micro); color: var(--text-2);
-  text-transform: uppercase; letter-spacing: var(--track-label); font-weight: 500;
-}
-.composition__item dd {
-  margin: 0; display: flex; align-items: baseline; gap: var(--space-2);
-  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
-}
-.composition__item dd strong { font-size: 19px; font-weight: 600; color: var(--text); }
-.composition__share { font-size: var(--size-xs); color: var(--text-3); }
-
-.composition__swatch {
-  width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto;
+  font-size: clamp(28px, 6vw, 42px);
+  font-weight: 600;
+  letter-spacing: var(--track-tight);
+  line-height: 1.05;
 }
 
-.composition__footnote {
-  margin: 0; font-size: var(--size-xs); color: var(--text-3); max-width: 62ch;
+.splash__quote {
+  margin: 0;
+  font-size: var(--size-lg);
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.72);
+  font-style: italic;
+}
+
+.splash__hint {
+  margin: var(--space-4) 0 0;
+  font-size: var(--size-micro);
+  text-transform: uppercase;
+  letter-spacing: var(--track-label);
+  color: rgba(255, 255, 255, 0.45);
+  animation: splash-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes splash-pulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* The pulse is atmosphere, not information; the slide is the feedback that the
+   key press registered, so it stays. */
+@media (prefers-reduced-motion: reduce) {
+  .splash__hint { animation: none; opacity: 0.8; }
+  .splash { transition-duration: 200ms; }
 }
