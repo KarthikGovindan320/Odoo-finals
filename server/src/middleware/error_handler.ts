@@ -89,17 +89,35 @@ export function errorHandler(
       return;
     }
 
-    // A database error we have not written a message for is our omission, not the
-    // user's mistake. Log it loudly so the gap gets closed.
+    // A recognised integrity violation we have not written a sentence for is still
+    // the user's action hitting a rule; say so honestly and log the gap.
+    if (status !== undefined) {
+      console.error(
+        `[error] unmapped constraint ${error.constraint ?? error.code} on ` +
+          `${request.method} ${request.originalUrl}`,
+        { detail: error.detail },
+      );
+      response.status(status).json({
+        error: {
+          code: status === 409 ? 'conflict' : 'validation_failed',
+          message: 'That change conflicts with a rule the database enforces and was not saved.',
+          details: isProduction ? undefined : { constraint: error.constraint, detail: error.detail },
+        },
+      });
+      return;
+    }
+
+    // Anything else -- a syntax error, an indeterminate parameter type, a lost
+    // connection -- is our bug. Reporting it as a conflict would blame the user
+    // for a mistake they did not make and hide the real fault.
     console.error(
-      `[error] unmapped postgres ${error.code} on ${request.method} ${request.originalUrl}`,
-      { constraint: error.constraint, detail: error.detail },
+      `[error] postgres ${error.code} on ${request.method} ${request.originalUrl}: ${error.message}`,
     );
-    response.status(status ?? 500).json({
+    response.status(500).json({
       error: {
-        code: 'conflict',
-        message: 'That change conflicts with a rule the database enforces and was not saved.',
-        details: isProduction ? undefined : { constraint: error.constraint, detail: error.detail },
+        code: 'internal_error',
+        message: 'Something went wrong on our side. The problem has been logged.',
+        details: isProduction ? undefined : { pg_code: error.code, message: error.message },
       },
     });
     return;

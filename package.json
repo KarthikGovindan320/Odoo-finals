@@ -15,7 +15,8 @@
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
     "test": "node --test \"server/test/**/*.test.ts\"",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify:flows": "node scripts/verify_demo_flows.mjs"
   },
   "engines": {
     "node": ">=22.6.0"
