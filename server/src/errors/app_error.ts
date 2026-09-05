@@ -14,6 +14,7 @@ export type ErrorCode =
   | 'conflict'
   | 'rule_configuration_invalid'
   | 'workflow_violation'
+  | 'rate_limited'
   | 'internal_error';
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
@@ -24,6 +25,7 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   conflict: 409,
   rule_configuration_invalid: 422,
   workflow_violation: 409,
+  rate_limited: 429,
   internal_error: 500,
 };
 

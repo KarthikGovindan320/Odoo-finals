@@ -25,6 +25,8 @@ import type { TransactionClient } from '../../db/pool.ts';
 import type { PayslipContext } from './rule_engine.ts';
 import type { ResolvedContract } from './contract_resolver.ts';
 import { dayOfWeek, eachDay, inclusiveDayCount } from './period.ts';
+import { TENANT_TIMEZONE } from '../../../../shared/tenant.ts';
+import { normaliseWage } from './contract_wage.ts';
 
 /**
  * Minutes past the scheduled end that do not count as overtime.
@@ -61,33 +63,68 @@ type LeaveRow = {
 /** What a scheduled weekday is worth: hours owed, and the unpaid break inside it. */
 type ScheduledDay = { netHours: number; breakHours: number };
 
+export type LoadedSchedule = { days: Map<number, ScheduledDay>; hoursPerWeek: number };
+
+/**
+ * Schedules repeat heavily across a payrun -- most companies run three or four
+ * patterns for hundreds of people -- so they are read once per distinct id
+ * rather than once per employee. The cache lives for one compute and is passed
+ * in, so nothing is held between requests and a schedule edited mid-run cannot
+ * be served stale on the next one.
+ */
+export type PayrollCache = {
+  schedules: Map<number, LoadedSchedule>;
+};
+
+export function createPayrollCache(): PayrollCache {
+  return { schedules: new Map() };
+}
+
 async function loadSchedule(
   client: TransactionClient,
   scheduleId: number | null,
-): Promise<{ days: Map<number, ScheduledDay>; hoursPerWeek: number }> {
+  cache: PayrollCache | undefined,
+): Promise<LoadedSchedule> {
   if (scheduleId === null) {
     return { days: new Map(), hoursPerWeek: 0 };
   }
 
-  const lines = await client.query<ScheduleLine>(
-    `SELECT day_of_week, worked_minutes, break_minutes
-       FROM working_schedule_lines WHERE working_schedule_id = $1`,
-    [scheduleId],
-  );
-  const schedule = await client.queryOne<{ hours_per_week: number }>(
-    'SELECT hours_per_week FROM working_schedules WHERE id = $1',
+  const cached = cache?.schedules.get(scheduleId);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  // One statement rather than two: the lines and the parent's weekly hours
+  // were separate round trips per employee.
+  const rows = await client.query<ScheduleLine & { hours_per_week: number }>(
+    `SELECT l.day_of_week, l.worked_minutes, l.break_minutes, w.hours_per_week
+       FROM working_schedules w
+       LEFT JOIN working_schedule_lines l ON l.working_schedule_id = w.id
+      WHERE w.id = $1`,
     [scheduleId],
   );
 
-  return {
-    days: new Map(
-      lines.map((line) => [
-        line.day_of_week,
-        { netHours: line.worked_minutes / 60, breakHours: line.break_minutes / 60 },
-      ]),
-    ),
-    hoursPerWeek: schedule?.hours_per_week ?? 0,
-  };
+  const lines = rows.filter((row) => row.day_of_week !== null);
+  const schedule = rows[0] === undefined ? null : { hours_per_week: rows[0].hours_per_week };
+
+  // A day may have more than one line -- a split shift is two, morning and
+  // afternoon -- so the lines are summed into the day rather than mapped onto it.
+  // Building the Map with lines.map() silently kept only the last line for each
+  // day, which halved a split shift's scheduled hours and put the payroll engine
+  // permanently at odds with the hours_per_week the database trigger computes
+  // from the same rows.
+  const days = new Map<number, ScheduledDay>();
+  for (const line of lines) {
+    const running = days.get(line.day_of_week);
+    days.set(line.day_of_week, {
+      netHours: (running?.netHours ?? 0) + line.worked_minutes / 60,
+      breakHours: (running?.breakHours ?? 0) + line.break_minutes / 60,
+    });
+  }
+
+  const loaded: LoadedSchedule = { days, hoursPerWeek: schedule?.hours_per_week ?? 0 };
+  cache?.schedules.set(scheduleId, loaded);
+  return loaded;
 }
 
 export async function buildWorkedSummary(
@@ -99,9 +136,10 @@ export async function buildWorkedSummary(
     periodStart: string;
     periodEnd: string;
   },
+  cache?: PayrollCache,
 ): Promise<WorkedSummary> {
   const scheduleId = input.contract.working_schedule_id ?? input.fallbackScheduleId;
-  const { days: scheduledWeekdays, hoursPerWeek } = await loadSchedule(client, scheduleId);
+  const { days: scheduledWeekdays, hoursPerWeek } = await loadSchedule(client, scheduleId, cache);
 
   const contractStart =
     input.contract.start_date > input.periodStart ? input.contract.start_date : input.periodStart;
@@ -163,13 +201,13 @@ export async function buildWorkedSummary(
   }
 
   const attendance = await client.query<AttendanceDay>(
-    `SELECT (check_in AT TIME ZONE 'Asia/Kolkata')::date::text AS work_date,
-            SUM(COALESCE(worked_hours, 0))                     AS worked_hours
+    `SELECT (check_in AT TIME ZONE $4)::date::text AS work_date,
+            SUM(COALESCE(worked_hours, 0))         AS worked_hours
        FROM attendance_records
       WHERE employee_id = $1
-        AND (check_in AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $2::date AND $3::date
+        AND (check_in AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date
       GROUP BY 1`,
-    [input.employeeId, contractStart, contractEnd],
+    [input.employeeId, contractStart, contractEnd, TENANT_TIMEZONE],
   );
 
   let workedHours = 0;
@@ -223,6 +261,24 @@ export async function buildWorkedSummary(
   };
 }
 
+/**
+ * Whole years between two dates, counted on the calendar rather than by dividing
+ * days by 365. The division drifts about a day a year, which is enough to tip a
+ * seniority threshold a year early for long-serving staff, and it returns a
+ * negative for a hire date after the period -- which a future-dated hire inside a
+ * run would produce.
+ */
+function completedYearsBetween(from: string, to: string): number {
+  const [fromYear, fromMonth, fromDay] = from.split('-').map(Number) as [number, number, number];
+  const [toYear, toMonth, toDay] = to.split('-').map(Number) as [number, number, number];
+
+  let years = toYear - fromYear;
+  if (toMonth < fromMonth || (toMonth === fromMonth && toDay < fromDay)) {
+    years -= 1;
+  }
+  return Math.max(years, 0);
+}
+
 export function toPayslipContext(
   employeeId: number,
   hireDate: string,
@@ -231,15 +287,13 @@ export function toPayslipContext(
   periodStart: string,
   periodEnd: string,
 ): PayslipContext {
-  const seniorityDays = inclusiveDayCount(hireDate, periodEnd);
-
   return {
     employee: {
       id: employeeId,
-      seniority_years: Math.floor(seniorityDays / 365),
+      seniority_years: completedYearsBetween(hireDate, periodEnd),
     },
     contract: {
-      wage: contract.wage,
+      ...normaliseWage(contract.wage, contract.wage_type, worked.schedule_hours_per_week),
       schedule_hours_per_week: worked.schedule_hours_per_week,
     },
     period: {

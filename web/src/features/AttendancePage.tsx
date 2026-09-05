@@ -6,7 +6,7 @@
  * it and why, so the audit trail cannot have a hole exactly where it matters.
  */
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import type { FormEvent } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
@@ -16,6 +16,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { TextAreaField, TextField } from '../components/Field.tsx';
+import { fromLocalInput, toLocalInput } from '../lib/timezone.ts';
 
 type AttendanceRow = {
   id: number; employee_id: number; employee_name: string;
@@ -26,7 +27,7 @@ type AttendanceRow = {
 
 export function AttendancePage() {
   const [params] = useSearchParams();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const employeeFilter = params.get('employee_id') ?? '';
 
   const [status, setStatus] = useState('');
@@ -83,10 +84,18 @@ export function AttendancePage() {
         </div>
       </div>
 
+      {/* Self-service punching. The API, the attendance:write permission and the
+          "today only" rule behind it all existed; there was simply no control
+          anywhere in the interface that used them, so the Employee role could
+          not record its own attendance at all. */}
+      {can('attendance:write') && user?.employee_id != null && (
+        <PunchClock employeeId={user.employee_id} onChanged={() => reload()} />
+      )}
+
       {employeeFilter !== '' && (
         <div className="alert alert--info">
           <span>Showing attendance for one employee only.</span>
-          <a href="/attendance">Show everyone</a>
+          <Link to="/attendance">Show everyone</Link>
         </div>
       )}
       {error !== null && <div className="error-box">{error}</div>}
@@ -96,11 +105,11 @@ export function AttendancePage() {
           <select className="select" style={{ width: 'auto' }} value={status}
             onChange={(event) => { setPage(1); setStatus(event.target.value); }}
             aria-label="Filter by status">
+            {/* Only the two statuses the system actually writes. Late,
+                Overtime and Left early were offered but never assigned by any
+                code path, so selecting one always returned an empty table. */}
             <option value="">Any status</option>
             <option value="present">Present</option>
-            <option value="late">Late</option>
-            <option value="overtime">Overtime</option>
-            <option value="early_leave">Left early</option>
             <option value="missing_checkout">Missing check-out</option>
           </select>
           <input className="input" style={{ width: 'auto' }} type="date" value={from}
@@ -124,18 +133,6 @@ export function AttendancePage() {
       )}
     </>
   );
-}
-
-/** Converts a timestamptz to the value a datetime-local input expects, in IST. */
-function toLocalInput(value: string | null): string {
-  if (value === null) return '';
-  const date = new Date(value);
-  const ist = new Date(date.getTime() + (330 + date.getTimezoneOffset()) * 60_000);
-  return ist.toISOString().slice(0, 16);
-}
-
-function fromLocalInput(value: string): string | null {
-  return value === '' ? null : `${value}:00+05:30`;
 }
 
 function CorrectionModal({
@@ -220,5 +217,72 @@ function CorrectionModal({
           onChange={(event) => setReason(event.target.value)} />
       </form>
     </Modal>
+  );
+}
+
+/* ------------------------------------------------------------ punch clock -- */
+
+type OpenPunch = { id: number; check_in: string } | null;
+
+/**
+ * Check in, and later check out.
+ *
+ * Check-out is a correction in the API's terms -- it edits an existing record --
+ * so it needs attendance:correct, which an ordinary employee does not have.
+ * Rather than hand out that permission, closing your own open punch is a POST of
+ * the completed record: the exclusion constraint means the open row has to go
+ * first, which the server does inside the same transaction.
+ */
+function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: () => void }) {
+  const open = useResource<{ rows: AttendanceRow[] }>(
+    `/attendance${queryString({ employee_id: employeeId, status: 'missing_checkout', page_size: 1 })}`,
+  );
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const current: OpenPunch = open.data?.rows[0] ?? null;
+
+  const punch = async (): Promise<void> => {
+    setBusy(true);
+    setError(null);
+    try {
+      if (current === null) {
+        await api.post('/attendance', {
+          employee_id: employeeId,
+          check_in: new Date().toISOString(),
+        });
+      } else {
+        await api.post(`/attendance/${current.id}/check-out`, {});
+      }
+      open.reload();
+      onChanged();
+    } catch (caught: unknown) {
+      setError(caught instanceof ApiError ? caught.message : 'Could not record that.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="punch">
+      <div className="punch__state">
+        {current === null ? (
+          <span className="muted">Not checked in.</span>
+        ) : (
+          <span>
+            Checked in at <strong>{formatTime(current.check_in)}</strong>{' '}
+            <span className="muted">— remember to check out before you leave.</span>
+          </span>
+        )}
+      </div>
+      <button
+        className={current === null ? 'btn btn--primary' : 'btn'}
+        onClick={() => void punch()}
+        disabled={busy || open.loading}
+      >
+        {busy ? 'Recording…' : current === null ? 'Check in' : 'Check out'}
+      </button>
+      {error !== null && <span className="field__error" role="alert">{error}</span>}
+    </div>
   );
 }

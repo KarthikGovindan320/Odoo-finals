@@ -12,19 +12,27 @@ import type { FormEvent } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
 import { useResource, type Page } from '../lib/use_resource.ts';
+import { useReference } from '../lib/use_reference.ts';
+import { useDebounced } from '../lib/use_debounced.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { SelectField, TextAreaField, TextField } from '../components/Field.tsx';
+import { EmployeePicker } from '../components/EmployeePicker.tsx';
 import { contractInput } from '../../../shared/schemas/hr.ts';
 
 type ContractRow = {
   id: number; reference: string; employee_id: number; employee_name: string;
   employee_number: string; start_date: string; end_date: string | null;
-  wage: number; wage_type: string; state: string;
+  wage: number; wage_type: string; state: string; notes: string;
   department_name: string | null; job_title: string | null;
   schedule_name: string | null; structure_name: string | null; is_current: boolean;
+  // The raw ids as well as the display names: the edit form needs something to
+  // put in a <select value>, and a name is not that.
+  department_id: number | null; job_position_id: number | null;
+  employment_type_id: number | null; working_schedule_id: number | null;
+  salary_structure_id: number | null;
 };
 
 type Reference = {
@@ -42,11 +50,13 @@ export function ContractsPage() {
 
   const [search, setSearch] = useState('');
   const [state, setState] = useState('');
+  const settledSearch = useDebounced(search);
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<ContractRow | null>(null);
 
   const path = `/contracts${queryString({
-    q: search, state, employee_id: employeeFilter, page, page_size: 25,
+    q: settledSearch, state, employee_id: employeeFilter, page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<ContractRow>>(path);
 
@@ -130,6 +140,7 @@ export function ContractsPage() {
         <DataTable
           columns={columns} rows={data?.rows ?? []} rowKey={(row) => row.id}
           loading={loading} emptyMessage="No contracts match these filters."
+          onRowClick={can('contract:write') ? (row) => setEditing(row) : undefined}
         />
         <Pagination page={data?.page ?? 1} totalPages={data?.total_pages ?? 1}
           total={data?.total ?? 0} onPageChange={setPage} />
@@ -141,22 +152,65 @@ export function ContractsPage() {
           onSaved={() => { setCreating(false); reload(); }}
         />
       )}
+
+      {editing !== null && (
+        <ContractFormModal
+          contract={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); reload(); }}
+        />
+      )}
     </>
   );
 }
 
-function ContractFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const reference = useResource<Reference>('/reference');
-  const employees = useResource<Page<{ id: number; first_name: string; last_name: string; employee_number: string }>>(
-    '/employees?page_size=200',
-  );
+function toFormValues(contract: ContractRow): Record<string, string> {
+  return {
+    reference: contract.reference,
+    employee_id: String(contract.employee_id),
+    start_date: contract.start_date,
+    end_date: contract.end_date ?? '',
+    department_id: contract.department_id === null ? '' : String(contract.department_id),
+    job_position_id: contract.job_position_id === null ? '' : String(contract.job_position_id),
+    employment_type_id:
+      contract.employment_type_id === null ? '' : String(contract.employment_type_id),
+    working_schedule_id:
+      contract.working_schedule_id === null ? '' : String(contract.working_schedule_id),
+    wage: String(contract.wage),
+    wage_type: contract.wage_type,
+    salary_structure_id:
+      contract.salary_structure_id === null ? '' : String(contract.salary_structure_id),
+    state: contract.state,
+    notes: contract.notes,
+  };
+}
 
-  const [values, setValues] = useState<Record<string, string>>({
-    reference: '', employee_id: '', start_date: new Date().toISOString().slice(0, 10),
-    end_date: '', department_id: '', job_position_id: '', employment_type_id: '',
-    working_schedule_id: '', wage: '', wage_type: 'monthly', salary_structure_id: '',
-    state: 'draft', notes: '',
-  });
+/**
+ * Create or edit a contract.
+ *
+ * Editing matters more than it looks: state is what payroll reads, and the
+ * resolver only considers 'running' and 'expired'. With create-only screens a
+ * contract could be brought into existence but never transitioned, so ending one
+ * or moving a draft into force was impossible anywhere in the interface.
+ */
+function ContractFormModal({
+  contract, onClose, onSaved,
+}: {
+  contract?: ContractRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const reference = useReference();
+  const [values, setValues] = useState<Record<string, string>>(
+    contract !== undefined
+      ? toFormValues(contract)
+      : {
+          reference: '', employee_id: '', start_date: new Date().toISOString().slice(0, 10),
+          end_date: '', department_id: '', job_position_id: '', employment_type_id: '',
+          working_schedule_id: '', wage: '', wage_type: 'monthly', salary_structure_id: '',
+          state: 'draft', notes: '',
+        },
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -187,7 +241,11 @@ function ContractFormModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     setErrors({});
     setBusy(true);
     try {
-      await api.post('/contracts', parsed.data);
+      if (contract === undefined) {
+        await api.post('/contracts', parsed.data);
+      } else {
+        await api.patch(`/contracts/${contract.id}`, parsed.data);
+      }
       onSaved();
     } catch (error: unknown) {
       if (error instanceof ApiError) {
@@ -204,7 +262,7 @@ function ContractFormModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 
   return (
     <Modal
-      title="New contract"
+      title={contract === undefined ? 'New contract' : `Edit ${contract.reference}`}
       onClose={onClose}
       wide
       footer={
@@ -222,11 +280,9 @@ function ContractFormModal({ onClose, onSaved }: { onClose: () => void; onSaved:
         <div className="form-grid">
           <TextField label="Reference" name="reference" required value={values.reference}
             error={errors.reference} onChange={set('reference')} hint="e.g. CTR/EMP0042/2" />
-          <SelectField label="Employee" name="employee_id" required placeholder="Choose an employee"
-            value={values.employee_id} error={errors.employee_id} onChange={set('employee_id')}
-            options={(employees.data?.rows ?? []).map((item) => ({
-              value: item.id, label: `${item.employee_number} — ${item.first_name} ${item.last_name}`,
-            }))} />
+          <EmployeePicker label="Employee" required
+            value={values.employee_id} error={errors.employee_id}
+            onChange={(id) => setValues((previous) => ({ ...previous, employee_id: id }))} />
           <TextField label="Start date" name="start_date" type="date" required
             value={values.start_date} error={errors.start_date} onChange={set('start_date')} />
           <TextField label="End date" name="end_date" type="date" value={values.end_date}

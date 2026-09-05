@@ -283,12 +283,23 @@ All demo accounts share the password `Password123!`:
 ### Commands
 
 ```bash
-npm test              # 66 unit tests: expression evaluator, rules engine,
-                      # leave consumption, row-level authorisation
+npm test              # 103 unit tests: expression evaluator and its static
+                      # checker, rules engine, leave consumption, row-level
+                      # authorisation, login throttle, period and money arithmetic
 npm run typecheck     # tsc --noEmit across server, shared and db
 npm run verify:flows  # drives both end-to-end flows over real HTTP (23 checks)
 npm run db:reset      # rebuild the schema and reseed from scratch
 ```
+
+`db:reset` drops every table, so it refuses to run when `NODE_ENV=production`,
+and refuses non-interactively unless you name the target explicitly:
+
+```bash
+CONFIRM_RESET_DATABASE=peoplepay360 npm run db:reset
+```
+
+CI runs typecheck, tests and a production build on every push, plus the flow
+script against a real Postgres service — see `.github/workflows/ci.yml`.
 
 `verify:flows` needs the API running. It reserves fresh payroll periods from live
 history on each run, so it is safe to run repeatedly.
@@ -393,3 +404,44 @@ presentation only; the server re-checks every route independently.
   before committing a configuration change. The engine is already pure, so this is
   an endpoint rather than a rewrite.
 - **Hourly-wage contracts** end to end. The column exists; the engine branch does not.
+
+---
+
+## Notes for anyone reading the code after the audit pass
+
+A full review of this codebase produced 118 findings, which were then worked
+through on `fix/audit-findings`. `AUDIT_PROGRESS.md` tracks them individually.
+Four behaviours changed in ways worth knowing before you use the system:
+
+**Leave duration is derived, not submitted.** A time-off request no longer
+carries a `requested_amount`. The server counts the scheduled working days
+between the two dates, because balance consumption and the payroll leave count
+were previously computed from different inputs and could disagree — a month-long
+request declared as half a day cost half a day of balance and produced a month of
+paid leave. A consequence: a request covering only non-working days is refused,
+since it contains no leave to take.
+
+**`NO_SCHEDULE` is a blocker.** An employee with no working days in the period
+cannot have a payslip computed, so the payrun now refuses to validate rather than
+finalising around them. Previously it was a warning, the payslip stayed in draft,
+the mailer skipped it, and the person was simply not paid.
+
+**Payslip PDFs print `INR 1,23,456.50`.** PDFKit's built-in Helvetica has no
+glyph for `₹` and was silently drawing a superscript one in its place, on every
+amount of every payslip. The screen still shows the symbol.
+
+**A payrun read is scoped.** `GET /api/v1/payruns` and `/payruns/:id` now filter
+to the caller's own payslips when their role holds `payrun:read` at scope `own` —
+which the Employee role does. Before, any signed-in employee could read every
+colleague's salary by opening the Payroll tab.
+
+Two limitations are known and deliberately left in place, both recorded in
+`AUDIT_PROGRESS.md`:
+
+- A contract change mid-period pays only the days the surviving contract covers.
+  The warning now says so explicitly, and the earlier days need a separate payrun.
+  Splitting a payslip into per-contract segments is a change to the money path
+  that wants its own review.
+- Attendance does not drive pay: a scheduled day with neither attendance nor
+  approved leave is still paid. That is a policy choice, and it now raises an
+  `UNEXPLAINED_ABSENCE` warning so it is a visible one.

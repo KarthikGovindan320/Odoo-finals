@@ -24,7 +24,7 @@ import { dashboardRouter } from './routes/dashboard_routes.ts';
 import { referenceRouter } from './routes/reference_routes.ts';
 
 /**
- * A minimal CORS layer. The `cors` package is fifty lines of configuration handling
+ * Hand-rolled CORS. The `cors` package is fifty lines of configuration handling
  * for what is, at one known origin with credentials, four headers. Reflecting a
  * single configured origin rather than '*' is also required: credentialed
  * requests are rejected by browsers when the origin is a wildcard.
@@ -51,7 +51,9 @@ export function createApp(): Express {
   const app = express();
 
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
+  // Only as many hops as are actually in front of us. See config/env.ts: trusting
+  // the whole X-Forwarded-For chain lets a client choose the IP we audit.
+  app.set('trust proxy', config.trustProxy);
 
   app.use(crossOrigin);
   app.use(express.json({ limit: '1mb' }));

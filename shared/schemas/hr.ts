@@ -5,13 +5,24 @@ import {
   email,
   identifier,
   isoDate,
+  isoDateTime,
+  timeOfDay,
   optionalIdentifier,
   optionalText,
   positiveAmount,
   requiredText,
 } from './common.ts';
 
-export const employeeInput = z.object({
+/**
+ * The employee record's fields, before any cross-field rule is applied.
+ *
+ * Kept separate from `employeeInput` so a PATCH can derive a partial version of
+ * it. The cross-field rules below cannot run on a partial payload -- "a
+ * terminated employee needs a termination date" is a question about the whole
+ * record -- so a partial update is merged over the stored row and the merged
+ * result is validated with the full schema. See employee_routes.ts.
+ */
+const employeeFields = z.object({
   employee_number: requiredText('Employee number', 20),
   first_name: requiredText('First name', 80),
   last_name: requiredText('Last name', 80),
@@ -24,13 +35,18 @@ export const employeeInput = z.object({
   manager_id: optionalIdentifier,
   working_schedule_id: optionalIdentifier,
   hire_date: isoDate,
-  status: z.enum(['active', 'on_leave', 'terminated']).default('active'),
+  // No .default() here on purpose -- see employeePatchInput below.
+  status: z.enum(['active', 'on_leave', 'terminated']),
   termination_date: isoDate.nullable().optional(),
   bank_name: optionalText(120),
   bank_account_number: optionalText(34),
   bank_ifsc: optionalText(15),
   address: optionalText(400),
-}).superRefine((value, ctx) => {
+});
+
+export const employeeInput = employeeFields
+  .extend({ status: z.enum(['active', 'on_leave', 'terminated']).default('active') })
+  .superRefine((value, ctx) => {
   // Mirrors the employee_termination_matches_status check constraint, so the user
   // hears about it from the form rather than from the database.
   if (value.status === 'terminated' && !value.termination_date) {
@@ -56,7 +72,8 @@ export const employeeInput = z.object({
   }
 });
 
-export const contractInput = z.object({
+/** Contract fields without the cross-field rules. See employeeFields above. */
+const contractFields = z.object({
   reference: requiredText('Contract reference', 60),
   employee_id: identifier,
   start_date: isoDate,
@@ -66,11 +83,19 @@ export const contractInput = z.object({
   employment_type_id: optionalIdentifier,
   working_schedule_id: optionalIdentifier,
   wage: positiveAmount('Wage'),
-  wage_type: z.enum(['monthly', 'hourly']).default('monthly'),
+  // Defaults are applied by contractInput, not here. See employeePatchInput.
+  wage_type: z.enum(['monthly', 'hourly']),
   salary_structure_id: optionalIdentifier,
-  state: z.enum(['draft', 'running', 'expired', 'cancelled']).default('draft'),
+  state: z.enum(['draft', 'running', 'expired', 'cancelled']),
   notes: optionalText(1000),
-}).superRefine((value, ctx) => {
+});
+
+export const contractInput = contractFields
+  .extend({
+    wage_type: z.enum(['monthly', 'hourly']).default('monthly'),
+    state: z.enum(['draft', 'running', 'expired', 'cancelled']).default('draft'),
+  })
+  .superRefine((value, ctx) => {
   if (value.end_date && value.end_date < value.start_date) {
     ctx.addIssue({
       code: 'custom',
@@ -82,8 +107,8 @@ export const contractInput = z.object({
 
 export const scheduleLineInput = z.object({
   day_of_week: z.coerce.number().int().min(0, 'Pick a day.').max(6, 'Pick a day.'),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/, 'Enter a time as HH:MM.'),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/, 'Enter a time as HH:MM.'),
+  start_time: timeOfDay,
+  end_time: timeOfDay,
   break_minutes: z.coerce.number().int().min(0, 'Break cannot be negative.').max(480).default(0),
 }).superRefine((value, ctx) => {
   if (value.end_time <= value.start_time) {
@@ -111,11 +136,14 @@ export const workingScheduleInput = z.object({
 
 export const attendanceInput = z.object({
   employee_id: identifier,
-  check_in: z.string().min(1, 'Check-in time is required.'),
-  check_out: z.string().nullable().optional(),
+  check_in: isoDateTime,
+  check_out: isoDateTime.nullable().optional(),
   edit_reason: optionalText(300),
 }).superRefine((value, ctx) => {
-  if (value.check_out && value.check_out <= value.check_in) {
+  // Compare instants, not strings. '2026-09-05T09:00:00+05:30' sorts after
+  // '2026-09-05T10:00:00Z' lexically while being four and a half hours earlier,
+  // so a string comparison here would pass a check-out that precedes check-in.
+  if (value.check_out != null && Date.parse(value.check_out) <= Date.parse(value.check_in)) {
     ctx.addIssue({
       code: 'custom',
       path: ['check_out'],
@@ -129,13 +157,23 @@ export const timeOffRequestInput = z.object({
   time_off_type_id: identifier,
   date_from: isoDate,
   date_to: isoDate,
-  requested_amount: positiveAmount('Duration'),
   reason: optionalText(500),
 }).superRefine((value, ctx) => {
   if (value.date_to < value.date_from) {
     ctx.addIssue({ code: 'custom', path: ['date_to'], message: 'Time off cannot end before it starts.' });
   }
 });
+
+/**
+ * Note what is NOT in the payload above: requested_amount.
+ *
+ * It used to be a free number the client sent alongside the dates, and nothing
+ * reconciled the two. Balance was drawn down by the amount, while payroll
+ * counted paid leave by walking the dates -- so a request for a whole month with
+ * an amount of 0.5 cost half a day of balance and produced a month of paid
+ * leave. The server now derives the duration from the dates and the employee's
+ * working schedule, which is the only figure both halves can agree on.
+ */
 
 export const timeOffAllocationInput = z.object({
   employee_id: identifier,
@@ -153,6 +191,22 @@ export const timeOffAllocationInput = z.object({
 export const decisionInput = z.object({
   decision_note: optionalText(500),
 });
+
+/**
+ * PATCH bodies: every field optional, no cross-field rules.
+ *
+ * Note that .partial() does NOT strip a .default() -- it wraps the field, and zod
+ * still fills the default in for an absent key. A "partial" built over defaulted
+ * fields therefore hands back status:'active' for a body that never mentioned
+ * status, which is exactly the reset this is meant to prevent. So the create-time
+ * defaults live on employeeInput/contractInput, and the shared field objects they
+ * extend carry none.
+ *
+ * The route merges one of these over the stored record and validates the merged
+ * result with the full schema.
+ */
+export const employeePatchInput = employeeFields.partial();
+export const contractPatchInput = contractFields.partial();
 
 export type EmployeeInput = z.infer<typeof employeeInput>;
 export type ContractInput = z.infer<typeof contractInput>;

@@ -6,6 +6,7 @@
  * server rejects a submission, its field errors are handed straight to these
  * components rather than being translated into something vaguer.
  */
+import { useId } from 'react';
 import type { ReactNode, SelectHTMLAttributes, InputHTMLAttributes, TextareaHTMLAttributes } from 'react';
 
 type FieldProps = {
@@ -14,10 +15,14 @@ type FieldProps = {
   required?: boolean;
   hint?: string;
   error?: string | undefined;
+  /** id of the element describing this field, wired to aria-describedby. */
+  describedBy?: string;
   children: ReactNode;
 };
 
-export function Field({ label, htmlFor, required, hint, error, children }: FieldProps) {
+export function Field({ label, htmlFor, required, hint, error, describedBy, children }: FieldProps) {
+  const showError = error !== undefined && error !== '';
+
   return (
     <div className="field">
       <label className="field__label" htmlFor={htmlFor}>
@@ -25,10 +30,10 @@ export function Field({ label, htmlFor, required, hint, error, children }: Field
         {required === true && <span className="field__required" aria-hidden="true">*</span>}
       </label>
       {children}
-      {error !== undefined && error !== '' ? (
-        <span className="field__error" role="alert">{error}</span>
+      {showError ? (
+        <span className="field__error" id={describedBy} role="alert">{error}</span>
       ) : (
-        hint !== undefined && <span className="field__hint">{hint}</span>
+        hint !== undefined && <span className="field__hint" id={describedBy}>{hint}</span>
       )}
     </div>
   );
@@ -41,14 +46,21 @@ type TextFieldProps = InputHTMLAttributes<HTMLInputElement> & {
 };
 
 export function TextField({ label, error, hint, required, ...inputProps }: TextFieldProps) {
-  const id = inputProps.name ?? label.replace(/\s+/g, '-').toLowerCase();
+  // useId rather than the label text: two fields sharing a label on one page
+  // produced the same DOM id, and every <label for> then pointed at the first.
+  const generated = useId();
+  const id = inputProps.id ?? generated;
+  const describedBy = `${id}-message`;
+  const hasMessage = (error !== undefined && error !== '') || hint !== undefined;
+
   return (
-    <Field label={label} htmlFor={id} required={required} hint={hint} error={error}>
+    <Field label={label} htmlFor={id} required={required} hint={hint} error={error} describedBy={describedBy}>
       <input
         {...inputProps}
         id={id}
         className="input"
         aria-invalid={error !== undefined && error !== ''}
+        aria-describedby={hasMessage ? describedBy : undefined}
       />
     </Field>
   );
@@ -65,14 +77,19 @@ type SelectFieldProps = SelectHTMLAttributes<HTMLSelectElement> & {
 export function SelectField({
   label, error, hint, required, options, placeholder, ...selectProps
 }: SelectFieldProps) {
-  const id = selectProps.name ?? label.replace(/\s+/g, '-').toLowerCase();
+  const generated = useId();
+  const id = selectProps.id ?? generated;
+  const describedBy = `${id}-message`;
+  const hasMessage = (error !== undefined && error !== '') || hint !== undefined;
+
   return (
-    <Field label={label} htmlFor={id} required={required} hint={hint} error={error}>
+    <Field label={label} htmlFor={id} required={required} hint={hint} error={error} describedBy={describedBy}>
       <select
         {...selectProps}
         id={id}
         className="select"
         aria-invalid={error !== undefined && error !== ''}
+        aria-describedby={hasMessage ? describedBy : undefined}
       >
         {placeholder !== undefined && <option value="">{placeholder}</option>}
         {options.map((option) => (
@@ -90,10 +107,20 @@ type TextAreaFieldProps = TextareaHTMLAttributes<HTMLTextAreaElement> & {
 };
 
 export function TextAreaField({ label, error, hint, required, ...props }: TextAreaFieldProps) {
-  const id = props.name ?? label.replace(/\s+/g, '-').toLowerCase();
+  const generated = useId();
+  const id = props.id ?? generated;
+  const describedBy = `${id}-message`;
+  const hasMessage = (error !== undefined && error !== '') || hint !== undefined;
+
   return (
-    <Field label={label} htmlFor={id} required={required} hint={hint} error={error}>
-      <textarea {...props} id={id} className="textarea" aria-invalid={error !== undefined && error !== ''} />
+    <Field label={label} htmlFor={id} required={required} hint={hint} error={error} describedBy={describedBy}>
+      <textarea
+        {...props}
+        id={id}
+        className="textarea"
+        aria-invalid={error !== undefined && error !== ''}
+        aria-describedby={hasMessage ? describedBy : undefined}
+      />
     </Field>
   );
 }

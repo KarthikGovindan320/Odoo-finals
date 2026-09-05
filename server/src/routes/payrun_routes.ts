@@ -41,6 +41,13 @@ async function loadPayrun(id: number): Promise<PayrunRow> {
   return payrun;
 }
 
+/**
+ * A payrun is a batch, so "read a payrun" is not one question but two: may this
+ * caller see the batch, and which of its payslips are theirs? A caller at scope
+ * 'own' sees only the runs they appear in, and inside one, only their own row --
+ * including in every aggregate, because a company-wide total is exactly the
+ * figure the scope exists to withhold.
+ */
 payruns.get('/', 'payrun:read', async (request, response) => {
   const filters = parseOrThrow(
     paginationQuery.safeExtend({
@@ -49,8 +56,21 @@ payruns.get('/', 'payrun:read', async (request, response) => {
     request.query,
   );
 
+  const restrictTo = scopedEmployeeId(request);
   const params: QueryParameter[] = [];
   const conditions = ['true'];
+
+  // Bound once and reused by every aggregate below, so a scoped caller cannot be
+  // shown a count or a total that spans employees they may not see.
+  let onlyMine = '';
+  if (restrictTo !== null) {
+    params.push(restrictTo);
+    onlyMine = ` AND ps.employee_id = $${params.length}`;
+    conditions.push(
+      `EXISTS (SELECT 1 FROM payslips ps WHERE ps.payrun_id = p.id${onlyMine})`,
+    );
+  }
+
   if (filters.state) {
     params.push(filters.state);
     conditions.push(`p.state = $${params.length}`);
@@ -61,6 +81,14 @@ payruns.get('/', 'payrun:read', async (request, response) => {
   }
   const where = conditions.join(' AND ');
 
+  // Warnings belong to a payslip, so scoping them means scoping to the payslips
+  // the caller may see rather than to the payrun.
+  const warningScope =
+    restrictTo === null
+      ? ''
+      : ` AND EXISTS (SELECT 1 FROM payslips ps
+                       WHERE ps.id = w.payslip_id${onlyMine})`;
+
   const totalRow = await queryOne<{ total: number }>(
     `SELECT count(*)::int AS total FROM payruns p WHERE ${where}`,
     params,
@@ -69,13 +97,14 @@ payruns.get('/', 'payrun:read', async (request, response) => {
   const rows = await query(
     `SELECT p.id, p.name, p.period_start::text, p.period_end::text, p.state,
             s.name AS structure_name,
-            (SELECT count(*)::int FROM payslips ps WHERE ps.payrun_id = p.id) AS payslip_count,
+            (SELECT count(*)::int FROM payslips ps
+              WHERE ps.payrun_id = p.id${onlyMine}) AS payslip_count,
             (SELECT COALESCE(SUM(ps.net_amount), 0) FROM payslips ps
-              WHERE ps.payrun_id = p.id AND ps.state <> 'cancelled') AS total_net,
+              WHERE ps.payrun_id = p.id AND ps.state <> 'cancelled'${onlyMine}) AS total_net,
             (SELECT count(*)::int FROM payslip_warnings w
-              WHERE w.payrun_id = p.id AND w.severity = 'blocker') AS blocker_count,
+              WHERE w.payrun_id = p.id AND w.severity = 'blocker'${warningScope}) AS blocker_count,
             (SELECT count(*)::int FROM payslip_warnings w
-              WHERE w.payrun_id = p.id AND w.severity = 'warning') AS warning_count
+              WHERE w.payrun_id = p.id AND w.severity = 'warning'${warningScope}) AS warning_count
        FROM payruns p
        JOIN salary_structures s ON s.id = p.salary_structure_id
       WHERE ${where}
@@ -94,6 +123,14 @@ payruns.get('/:id', 'payrun:read', async (request, response) => {
   const id = parseOrThrow(identifier, request.params.id);
   const payrun = await loadPayrun(id);
 
+  const restrictTo = scopedEmployeeId(request);
+  const params: QueryParameter[] = [id];
+  let onlyMine = '';
+  if (restrictTo !== null) {
+    params.push(restrictTo);
+    onlyMine = ` AND ps.employee_id = $${params.length}`;
+  }
+
   const [structure, payslips, warnings] = await Promise.all([
     queryOne('SELECT id, name, code FROM salary_structures WHERE id = $1', [payrun.salary_structure_id]),
     query(
@@ -108,22 +145,29 @@ payruns.get('/:id', 'payrun:read', async (request, response) => {
          JOIN employees e ON e.id = ps.employee_id
          LEFT JOIN departments d ON d.id = e.department_id
          LEFT JOIN contracts c   ON c.id = ps.contract_id
-        WHERE ps.payrun_id = $1
+        WHERE ps.payrun_id = $1${onlyMine}
         ORDER BY e.employee_number`,
-      [id],
+      params,
     ),
     query(
       `SELECT w.id, w.payslip_id, w.severity, w.code, w.message,
               ps.number AS payslip_number,
               e.first_name || ' ' || e.last_name AS employee_name
          FROM payslip_warnings w
-         LEFT JOIN payslips ps ON ps.id = w.payslip_id
+         ${restrictTo === null ? 'LEFT JOIN' : 'JOIN'} payslips ps ON ps.id = w.payslip_id
          LEFT JOIN employees e ON e.id = ps.employee_id
-        WHERE w.payrun_id = $1
+        WHERE w.payrun_id = $1${onlyMine}
         ORDER BY CASE w.severity WHEN 'blocker' THEN 0 WHEN 'warning' THEN 1 ELSE 2 END, w.id`,
-      [id],
+      params,
     ),
   ]);
+
+  // A scoped caller with no payslip in this batch has nothing to see here. 404
+  // rather than 403: whether a payrun they are not part of exists is itself not
+  // theirs to learn.
+  if (restrictTo !== null && payslips.length === 0) {
+    throw notFound('Payrun', id);
+  }
 
   response.json({ ...payrun, structure, payslips, warnings });
 });
@@ -203,7 +247,7 @@ payruns.post('/:id/send-payslips', 'payrun:validate', async (request, response) 
     );
   }
 
-  const payslips = await query<{ id: number; work_email: string; already_sent: boolean }>(
+  const payslips = await query<{ id: number; work_email: string | null; already_sent: boolean }>(
     `SELECT ps.id, e.work_email,
             EXISTS (SELECT 1 FROM email_deliveries d
                      WHERE d.payslip_id = ps.id AND d.status = 'sent') AS already_sent
@@ -216,8 +260,23 @@ payruns.post('/:id/send-payslips', 'payrun:validate', async (request, response) 
 
   // Skip anyone who already received theirs. Sending a second copy of a payslip
   // reads as a correction and generates support tickets.
-  const pending = payslips.filter((row) => !row.already_sent);
-  const outcomes = { sent: 0, failed: 0, skipped: payslips.length - pending.length };
+  const alreadySent = payslips.filter((row) => row.already_sent);
+  // An employee with no work email cannot be sent to. Reported separately rather
+  // than counted as a failure, because nothing went wrong with the send -- there
+  // is a gap in the employee record, and that is a different thing to fix.
+  const undeliverable = payslips.filter(
+    (row) => !row.already_sent && (row.work_email === null || row.work_email.trim() === ''),
+  );
+  const pending = payslips.filter(
+    (row) => !row.already_sent && row.work_email !== null && row.work_email.trim() !== '',
+  );
+
+  const outcomes = {
+    sent: 0,
+    failed: 0,
+    skipped: alreadySent.length,
+    no_email: undeliverable.length,
+  };
 
   for (const row of pending) {
     const data = await loadPayslipDocument(row.id);
@@ -226,7 +285,7 @@ payruns.post('/:id/send-payslips', 'payrun:validate', async (request, response) 
     }
 
     const outcome = await sendPayslip({
-      toEmail: row.work_email,
+      toEmail: row.work_email as string,
       employeeName: data.employee_name,
       payslipNumber: data.number,
       periodStart: data.period_start,
@@ -287,7 +346,7 @@ async function loadPayslipDocument(id: number): Promise<PayslipDocumentData | nu
   }
 
   const lines = await query<PayslipDocumentData['lines'][number]>(
-    `SELECT rule_code, rule_name, category_code, category_sign, amount
+    `SELECT rule_code, rule_name, category_code, category_sign, amount, source_expression
        FROM payslip_lines WHERE payslip_id = $1 ORDER BY sequence`,
     [id],
   );

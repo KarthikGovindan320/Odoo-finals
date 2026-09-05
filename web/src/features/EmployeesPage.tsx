@@ -9,6 +9,8 @@ import { useNavigate } from 'react-router';
 
 import { queryString } from '../lib/api.ts';
 import { useResource, type Page } from '../lib/use_resource.ts';
+import { useReference } from '../lib/use_reference.ts';
+import { useDebounced } from '../lib/use_debounced.ts';
 import { formatDate, formatMoney, stateVariant, humanize } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { Badge, Panel, Toolbar } from '../components/Chrome.tsx';
@@ -41,6 +43,9 @@ export function EmployeesPage() {
   const navigate = useNavigate();
   const { can } = useAuth();
   const [view, setView] = useState<'list' | 'kanban'>('list');
+  // Kanban groups whatever the request returned, so its page size is the board's
+  // capacity. It is paginated like the list rather than silently truncated.
+  const pageSize = 60;
   const [search, setSearch] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   const [employmentTypeId, setEmploymentTypeId] = useState('');
@@ -49,10 +54,12 @@ export function EmployeesPage() {
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
 
-  const reference = useResource<Reference>('/reference');
+  const reference = useReference();
+  // The typed value drives the input; the settled value drives the request.
+  const settledSearch = useDebounced(search);
   const path = `/employees${queryString({
-    q: search, department_id: departmentId, employment_type_id: employmentTypeId,
-    status, sort, page, page_size: view === 'kanban' ? 60 : 25,
+    q: settledSearch, department_id: departmentId, employment_type_id: employmentTypeId,
+    status, sort, page, page_size: pageSize,
   })}`;
   const { data, loading, error, reload } = useResource<Page<EmployeeRow>>(path);
 
@@ -165,13 +172,24 @@ export function EmployeesPage() {
             />
           </>
         ) : (
-          <div style={{ padding: 'var(--space-3)' }}>
-            <KanbanByDepartment
-              rows={data?.rows ?? []}
-              loading={loading}
-              onOpen={(id) => navigate(`/employees/${id}`)}
+          <>
+            <div style={{ padding: 'var(--space-3)' }}>
+              <KanbanByDepartment
+                rows={data?.rows ?? []}
+                loading={loading}
+                onOpen={(id) => navigate(`/employees/${id}`)}
+              />
+            </div>
+            {/* The board previously showed page one and offered no way to reach
+                the rest, so past 60 employees whole departments were missing
+                with nothing to say so. */}
+            <Pagination
+              page={data?.page ?? 1}
+              totalPages={data?.total_pages ?? 1}
+              total={data?.total ?? 0}
+              onPageChange={setPage}
             />
-          </div>
+          </>
         )}
       </Panel>
 

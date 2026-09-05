@@ -6,6 +6,11 @@
  * the balance is short, nothing is written and the request stays pending -- there
  * is no window in which a request is approved but unfunded.
  *
+ * That holds under concurrency because the allocations are locked before the
+ * balance is read (consumption.ts) and a database trigger refuses an overdraw
+ * whatever path reaches it (migration 014). Without both, two approvals could
+ * each read the same remaining balance and each spend it.
+ *
  * Refusing or cancelling a previously approved request deletes its consumption
  * rows. Because balance is derived rather than stored, that is the whole reversal.
  */
@@ -24,6 +29,7 @@ import {
 } from '../../../shared/schemas/hr.ts';
 import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
 import { consumeForRequest, releaseForRequest } from '../services/time_off/consumption.ts';
+import { deriveLeaveDuration } from '../services/time_off/duration.ts';
 
 const timeOff = createGuardedRouter();
 
@@ -85,6 +91,14 @@ timeOff.get('/allocations', 'timeoff:read', async (request, response) => {
     where = `a.employee_id = $${params.length}`;
   }
 
+  // The total is returned like every other list endpoint. Without it the client
+  // was left inventing the page count from the length of the page it had, so a
+  // screen showing 25 of 500 allocations reported "25 records".
+  const totalRow = await queryOne<{ total: number }>(
+    `SELECT count(*)::int AS total FROM time_off_allocations a WHERE ${where}`,
+    params,
+  );
+
   const rows = await query(
     `SELECT a.id, a.employee_id,
             e.first_name || ' ' || e.last_name AS employee_name,
@@ -102,7 +116,11 @@ timeOff.get('/allocations', 'timeoff:read', async (request, response) => {
     [...params, filters.page_size, (filters.page - 1) * filters.page_size],
   );
 
-  response.json({ rows, page: filters.page, page_size: filters.page_size });
+  const total = totalRow?.total ?? 0;
+  response.json({
+    rows, page: filters.page, page_size: filters.page_size, total,
+    total_pages: Math.max(Math.ceil(total / filters.page_size), 1),
+  });
 });
 
 timeOff.post('/allocations', 'timeoff:approve', validateBody(timeOffAllocationInput), async (request, response) => {
@@ -237,21 +255,33 @@ timeOff.post('/requests', 'timeoff:write', validateBody(timeOffRequestInput), as
   const input = request.body as typeof timeOffRequestInput._output;
   requireOwnEmployee(request, input.employee_id);
 
-  const row = await withTransaction(
-    (client) =>
-      client.queryOne<{ id: number }>(
-        `INSERT INTO time_off_requests
-           (employee_id, time_off_type_id, date_from, date_to, requested_amount, state, reason)
-         VALUES ($1, $2, $3, $4, $5, 'to_approve', $6) RETURNING id`,
-        [
-          input.employee_id, input.time_off_type_id, input.date_from,
-          input.date_to, input.requested_amount, input.reason ?? '',
-        ],
-      ),
-    request.auth?.userId,
-  );
+  const created = await withTransaction(async (client) => {
+    // Derived, never accepted from the caller. See services/time_off/duration.ts
+    // for why the two used to be able to disagree.
+    const duration = await deriveLeaveDuration(client, {
+      employeeId: input.employee_id,
+      dateFrom: input.date_from,
+      dateTo: input.date_to,
+    });
 
-  response.status(201).json(row);
+    const row = await client.queryOne<{ id: number }>(
+      `INSERT INTO time_off_requests
+         (employee_id, time_off_type_id, date_from, date_to, requested_amount, state, reason)
+       VALUES ($1, $2, $3, $4, $5, 'to_approve', $6) RETURNING id`,
+      [
+        input.employee_id, input.time_off_type_id, input.date_from,
+        input.date_to, duration.amount, input.reason ?? '',
+      ],
+    );
+
+    return { id: row?.id ?? null, ...duration };
+  }, request.auth?.userId);
+
+  response.status(201).json({
+    id: created.id,
+    requested_amount: created.amount,
+    calendar_days: created.calendarDays,
+  });
 });
 
 type RequestRow = {

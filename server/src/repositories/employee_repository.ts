@@ -6,7 +6,7 @@
  * has 'own' access, and the restriction is applied in the WHERE clause rather
  * than by filtering afterwards, so an Employee cannot page past their own record.
  */
-import { query, queryOne } from '../db/pool.ts';
+import { query, queryOne, insertedId } from '../db/pool.ts';
 import type { QueryParameter, TransactionClient } from '../db/pool.ts';
 import type { EmployeeInput } from '../../../shared/schemas/hr.ts';
 
@@ -25,6 +25,7 @@ export type EmployeeListRow = {
   manager_name: string | null;
   schedule_name: string | null;
   current_wage: number | null;
+  current_wage_type: string | null;
 };
 
 export type EmployeeListFilters = {
@@ -56,7 +57,10 @@ export async function listEmployees(
     conditions.push(`e.id = $${params.length}`);
   }
   if (filters.search) {
-    params.push(`%${filters.search}%`);
+    // % and _ are wildcards to ILIKE, so a search for "50%" matched everything
+    // rather than the thing the user typed. Escaped with a backslash, which is
+    // the default ESCAPE character.
+    params.push(`%${filters.search.replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(
       `(e.first_name ILIKE $${params.length} OR e.last_name ILIKE $${params.length}
         OR e.employee_number ILIKE $${params.length} OR e.work_email ILIKE $${params.length})`,
@@ -99,7 +103,8 @@ export async function listEmployees(
             t.name  AS employment_type_name,
             m.first_name || ' ' || m.last_name AS manager_name,
             w.name  AS schedule_name,
-            cc.wage AS current_wage
+            cc.wage AS current_wage,
+            cc.wage_type AS current_wage_type
        FROM employees e
        LEFT JOIN departments d      ON d.id = e.department_id
        LEFT JOIN job_positions j    ON j.id = e.job_position_id
@@ -149,6 +154,7 @@ export async function findEmployee(id: number): Promise<EmployeeDetail | null> {
             m.first_name || ' ' || m.last_name AS manager_name,
             w.name  AS schedule_name,
             cc.wage AS current_wage,
+            cc.wage_type AS current_wage_type,
             (SELECT count(*)::int FROM contracts            WHERE employee_id = e.id) AS contract_count,
             (SELECT count(*)::int FROM attendance_records   WHERE employee_id = e.id) AS attendance_count,
             (SELECT count(*)::int FROM time_off_requests    WHERE employee_id = e.id) AS time_off_count,
@@ -173,10 +179,28 @@ const WRITABLE_COLUMNS = [
   'address',
 ] as const;
 
+/**
+ * Columns where a blank means "no value" and must be stored as NULL.
+ *
+ * Every other writable column here is NOT NULL, so a blank has to reach the
+ * database as '' rather than as NULL. See the same set in contract_repository.
+ */
+const NULL_WHEN_BLANK = new Set<string>([
+  'personal_email', 'work_phone', 'department_id', 'job_position_id',
+  'employment_type_id', 'manager_id', 'working_schedule_id', 'termination_date',
+  'bank_name', 'bank_account_number', 'bank_ifsc', 'address',
+]);
+
 function toParams(input: EmployeeInput): QueryParameter[] {
   return WRITABLE_COLUMNS.map((column) => {
     const value = (input as Record<string, unknown>)[column];
-    return value === undefined || value === '' ? null : (value as QueryParameter);
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (value === '') {
+      return NULL_WHEN_BLANK.has(column) ? null : '';
+    }
+    return value as QueryParameter;
   });
 }
 
@@ -190,7 +214,7 @@ export async function insertEmployee(
      VALUES (${placeholders}) RETURNING id`,
     toParams(input),
   );
-  return (row as { id: number }).id;
+  return insertedId(row, 'an employee');
 }
 
 export async function updateEmployee(
@@ -205,7 +229,51 @@ export async function updateEmployee(
   );
 }
 
+/**
+ * Withdraws the login attached to an employee, if there is one.
+ *
+ * Deactivating the user is not enough on its own: resolveSession() checks
+ * users.is_active, but a session already issued would keep working until it
+ * expired, which for a twelve-hour TTL is most of a working day after someone
+ * has been walked out. Both halves belong in the same transaction as whatever
+ * offboarding step called this.
+ */
+async function revokeEmployeeAccess(client: TransactionClient, id: number): Promise<void> {
+  await client.query(
+    `UPDATE users SET is_active = false, updated_at = now()
+      WHERE id = (SELECT user_id FROM employees WHERE id = $1)
+        AND is_active`,
+    [id],
+  );
+
+  await client.query(
+    `UPDATE sessions SET revoked_at = now()
+      WHERE user_id = (SELECT user_id FROM employees WHERE id = $1)
+        AND revoked_at IS NULL`,
+    [id],
+  );
+}
+
 /** Archives rather than deletes: payroll history must never point at a missing row. */
 export async function archiveEmployee(client: TransactionClient, id: number): Promise<void> {
   await client.query('UPDATE employees SET is_active = false, updated_at = now() WHERE id = $1', [id]);
+  await revokeEmployeeAccess(client, id);
+}
+
+/**
+ * Applies the access consequences of an employment status change.
+ *
+ * Termination is an offboarding event, not merely a field edit, so it withdraws
+ * the login the same way archiving does. Reinstatement is deliberately not
+ * automatic in the other direction: handing someone their credentials back is a
+ * decision for an administrator, not a side effect of correcting a status field.
+ */
+export async function applyStatusSideEffects(
+  client: TransactionClient,
+  id: number,
+  status: string,
+): Promise<void> {
+  if (status === 'terminated') {
+    await revokeEmployeeAccess(client, id);
+  }
 }

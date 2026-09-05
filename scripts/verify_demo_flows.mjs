@@ -142,20 +142,34 @@ const paidType = types.body.rows.find((t) => t.code === 'PAID');
 
 // Inside the seeded allocation window (this calendar year) and clear of the
 // seeded leave history, which ends today. December is reliably free.
-const leaveDay = 1 + (Number(period.start.slice(5, 7)) % 20);
-const leaveWindow = {
-  from: `${new Date().getUTCFullYear()}-12-${String(leaveDay).padStart(2, '0')}`,
-  to: `${new Date().getUTCFullYear()}-12-${String(leaveDay + 1).padStart(2, '0')}`,
-};
+//
+// The window must be working days. The server derives a request's duration from
+// the employee's working schedule, so a Saturday-to-Sunday request is correctly
+// refused as containing no leave to take -- which is right, and which this
+// fixture used to trip over depending on where in the week December landed.
+function firstMondayOfDecember(year) {
+  for (let day = 1; day <= 7; day += 1) {
+    const candidate = new Date(Date.UTC(year, 11, day));
+    if (candidate.getUTCDay() === 1) {
+      return candidate.toISOString().slice(0, 10);
+    }
+  }
+  throw new Error('December has no Monday, which cannot happen.');
+}
+
+const leaveFrom = firstMondayOfDecember(new Date().getUTCFullYear());
+const leaveWindow = { from: leaveFrom, to: addDays(leaveFrom, 1) };
 
 const balancesBefore = await call('GET', `/time-off/balances?employee_id=${employee}`);
 const paidBefore = balancesBefore.body.rows.find((r) => r.type_code === 'PAID');
 
 const request = await call('POST', '/time-off/requests', {
   employee_id: employee, time_off_type_id: paidType.id,
-  date_from: leaveWindow.from, date_to: leaveWindow.to, requested_amount: 2, reason: 'Demo flow',
+  date_from: leaveWindow.from, date_to: leaveWindow.to, reason: 'Demo flow',
 });
-check('leave request created', request.status === 201);
+check('leave request created with a server-derived duration',
+  request.status === 201 && request.body.requested_amount === 2,
+  `${request.body.calendar_days} calendar days -> ${request.body.requested_amount} working days`);
 
 const approved = await call('POST', `/time-off/requests/${request.body.id}/approve`, {});
 check('approval draws from a named allocation', approved.status === 200
@@ -167,7 +181,7 @@ check('approval draws from a named allocation', approved.status === 200
 // intent and refused when someone tries to fund it.
 const outOfWindow = await call('POST', '/time-off/requests', {
   employee_id: employee, time_off_type_id: paidType.id,
-  date_from: '2029-03-01', date_to: '2029-03-02', requested_amount: 2, reason: 'Outside allocation window',
+  date_from: '2029-03-01', date_to: '2029-03-02', reason: 'Outside allocation window',
 });
 const outOfWindowApproval = await call('POST', `/time-off/requests/${outOfWindow.body.id}/approve`, {});
 check('leave outside every allocation window is refused at approval, with the reason',
@@ -177,9 +191,9 @@ check('leave outside every allocation window is refused at approval, with the re
 
 const balancesAfter = await call('GET', `/time-off/balances?employee_id=${employee}`);
 const paidAfter = balancesAfter.body.rows.find((r) => r.type_code === 'PAID');
-check('balance decreased by exactly the request',
-  Number(paidBefore.remaining) - Number(paidAfter.remaining) === 2,
-  `${paidBefore.remaining} -> ${paidAfter.remaining}`);
+check('balance decreased by exactly the derived duration',
+  Number(paidBefore.remaining) - Number(paidAfter.remaining) === Number(request.body.requested_amount),
+  `${paidBefore.remaining} -> ${paidAfter.remaining} for a ${request.body.requested_amount}-day request`);
 
 const refused = await call('POST', `/time-off/requests/${request.body.id}/refuse`, {
   decision_note: 'Reversing for the demo',
@@ -193,7 +207,7 @@ check('refusing an approved request restores balance automatically',
 console.log('\n=== unpaid leave reaches payroll ===');
 const unpaidRequest = await call('POST', '/time-off/requests', {
   employee_id: employee, time_off_type_id: unpaid.id,
-  date_from: addDays(secondPeriod.start, 2), date_to: addDays(secondPeriod.start, 4), requested_amount: 3, reason: 'Unpaid demo',
+  date_from: addDays(secondPeriod.start, 2), date_to: addDays(secondPeriod.start, 4), reason: 'Unpaid demo',
 });
 await call('POST', `/time-off/requests/${unpaidRequest.body.id}/approve`, {});
 

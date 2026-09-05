@@ -37,3 +37,26 @@ export function formatMoney(value: number, currencyCode = 'INR'): string {
     minimumFractionDigits: 2,
   }).format(value);
 }
+
+/**
+ * The same amount, written for a PDF: 'INR 1,23,456.50' rather than
+ * '₹1,23,456.50'.
+ *
+ * PDFKit's built-in Helvetica is WinAnsi-encoded and has no glyph for U+20B9.
+ * Asked to draw one it emits byte 0xB9, which renders as a superscript one — so
+ * every amount on every payslip printed as '¹1,23,456.50'.
+ *
+ * The alternative is embedding a Unicode TTF, which means either shipping a
+ * binary font in the repository or reading one from a system path that is not
+ * guaranteed to exist. Writing the ISO currency code costs nothing, is portable
+ * to any machine, and is the conventional form on a formal financial document
+ * anyway. The screen keeps the symbol, where the web font supports it.
+ */
+export function formatMoneyForPrint(value: number, currencyCode = 'INR'): string {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: currencyCode,
+    currencyDisplay: 'code',
+    minimumFractionDigits: 2,
+  }).format(value);
+}

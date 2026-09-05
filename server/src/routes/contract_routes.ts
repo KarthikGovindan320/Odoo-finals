@@ -13,7 +13,7 @@ import { withTransaction } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
-import { contractInput } from '../../../shared/schemas/hr.ts';
+import { contractInput, contractPatchInput } from '../../../shared/schemas/hr.ts';
 import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
 import {
   findContract,
@@ -64,13 +64,46 @@ contracts.post('/', 'contract:write', validateBody(contractInput), async (reques
   response.status(201).json(await findContract(id));
 });
 
-contracts.patch('/:id', 'contract:write', validateBody(contractInput), async (request, response) => {
+/** The stored contract in the shape the input schema describes. See employee_routes.ts. */
+function toContractInput(existing: NonNullable<Awaited<ReturnType<typeof findContract>>>) {
+  return {
+    reference: existing.reference,
+    employee_id: existing.employee_id,
+    start_date: existing.start_date,
+    end_date: existing.end_date,
+    department_id: existing.department_id,
+    job_position_id: existing.job_position_id,
+    employment_type_id: existing.employment_type_id,
+    working_schedule_id: existing.working_schedule_id,
+    wage: existing.wage,
+    wage_type: existing.wage_type,
+    salary_structure_id: existing.salary_structure_id,
+    state: existing.state,
+    notes: existing.notes,
+  };
+}
+
+/**
+ * Partial update, merged over the stored row.
+ *
+ * The stakes here are the mirror of the employee case: `state` defaults to
+ * 'draft' on create, and a full-body PATCH that omitted it would move a running
+ * contract back to draft -- where the contract resolver, which reads only
+ * 'running' and 'expired', stops seeing it and the employee's next payslip fails
+ * with NO_CONTRACT.
+ */
+contracts.patch('/:id', 'contract:write', validateBody(contractPatchInput), async (request, response) => {
   const id = parseOrThrow(identifier, request.params.id);
-  if ((await findContract(id)) === null) {
+  const existing = await findContract(id);
+  if (existing === null) {
     throw notFound('Contract', id);
   }
+
+  const patch = request.body as Partial<typeof contractInput._output>;
+  const merged = parseOrThrow(contractInput, { ...toContractInput(existing), ...patch });
+
   await withTransaction(
-    (client) => updateContract(client, id, request.body as typeof contractInput._output),
+    (client) => updateContract(client, id, merged),
     request.auth?.userId,
   );
   response.json(await findContract(id));

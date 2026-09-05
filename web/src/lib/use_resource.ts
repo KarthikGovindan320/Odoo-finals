@@ -5,7 +5,7 @@
  * dashboard -- and forty lines we can explain beats a dependency whose cache
  * semantics we would have to defend under questioning.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api, ApiError } from './api.ts';
 
@@ -21,6 +21,7 @@ export function useResource<Data>(path: string | null, deps: unknown[] = []): Re
   const [loading, setLoading] = useState(path !== null);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
+  const loadedPath = useRef<string | null>(path);
 
   const reload = useCallback(() => setNonce((value) => value + 1), []);
 
@@ -33,6 +34,13 @@ export function useResource<Data>(path: string | null, deps: unknown[] = []): Re
     let cancelled = false;
     setLoading(true);
     setError(null);
+    // Drop the previous record when the address changes. Keeping it meant
+    // navigating from one employee to another rendered the first one's name,
+    // wage and bank details until the second arrived.
+    if (path !== loadedPath.current) {
+      setData(null);
+      loadedPath.current = path;
+    }
 
     api
       .get<Data>(path)

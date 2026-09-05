@@ -8,7 +8,8 @@
  */
 import { AppError, workflowViolation } from '../../errors/app_error.ts';
 import type { TransactionClient } from '../../db/pool.ts';
-import { countBlockers } from './warnings.ts';
+import { insertedId } from '../../db/pool.ts';
+import { countBlockers, refreshContextWarnings } from './warnings.ts';
 
 export type EligibleEmployee = {
   employee_id: number;
@@ -96,6 +97,32 @@ export async function findEligibleEmployees(
   });
 }
 
+/**
+ * Loads a payrun and holds its row for the rest of the transaction.
+ *
+ * Every transition here reads the state, decides, then writes -- and at READ
+ * COMMITTED without a lock, two callers can both read 'computed' and both
+ * proceed. Two validates would each move the payslips they saw; two computes
+ * would interleave a DELETE of payslip_lines with the other's INSERTs. Taking
+ * the payrun row is enough to serialise all of them, because every transition
+ * goes through this function.
+ */
+async function lockPayrun(
+  client: TransactionClient,
+  payrunId: number,
+): Promise<{ name: string; state: string }> {
+  const payrun = await client.queryOne<{ name: string; state: string }>(
+    'SELECT name, state FROM payruns WHERE id = $1 FOR UPDATE',
+    [payrunId],
+  );
+  if (payrun === null) {
+    throw new AppError('not_found', `Payrun ${payrunId} does not exist.`);
+  }
+  return payrun;
+}
+
+export { lockPayrun };
+
 export async function createPayrun(
   client: TransactionClient,
   input: {
@@ -147,23 +174,24 @@ export async function createPayrun(
       input.departmentId ?? null, input.employmentTypeId ?? null, input.createdByUserId,
     ],
   );
-  const payrunId = (payrun as { id: number }).id;
+  const payrunId = insertedId(payrun, 'a payrun');
 
   const label = input.periodStart.slice(0, 7).replace('-', '/');
-  let sequence = 0;
+  const numbers = input.employeeIds.map(
+    (_, index) =>
+      `PS/${label}/${String(payrunId).padStart(3, '0')}${String(index + 1).padStart(3, '0')}`,
+  );
 
-  for (const employeeId of input.employeeIds) {
-    sequence += 1;
-    await client.query(
-      `INSERT INTO payslips
-         (number, payrun_id, employee_id, salary_structure_id, period_start, period_end)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [
-        `PS/${label}/${String(payrunId).padStart(3, '0')}${String(sequence).padStart(3, '0')}`,
-        payrunId, employeeId, input.salaryStructureId, input.periodStart, input.periodEnd,
-      ],
-    );
-  }
+  await client.query(
+    `INSERT INTO payslips
+       (number, payrun_id, employee_id, salary_structure_id, period_start, period_end)
+     SELECT n, $2, e, $3, $4::date, $5::date
+       FROM unnest($1::text[], $6::bigint[]) AS t(n, e)`,
+    [
+      numbers, payrunId, input.salaryStructureId,
+      input.periodStart, input.periodEnd, input.employeeIds,
+    ] as never,
+  );
 
   return payrunId;
 }
@@ -172,19 +200,25 @@ export async function validatePayrun(
   client: TransactionClient,
   payrunId: number,
 ): Promise<{ validated: number }> {
-  const payrun = await client.queryOne<{ name: string; state: string }>(
-    'SELECT name, state FROM payruns WHERE id = $1',
-    [payrunId],
-  );
-  if (payrun === null) {
-    throw new AppError('not_found', `Payrun ${payrunId} does not exist.`);
-  }
+  const payrun = await lockPayrun(client, payrunId);
+
   if (payrun.state === 'draft') {
     throw workflowViolation('Compute this payrun before validating it — there is nothing to check yet.');
+  }
+  if (payrun.state === 'cancelled') {
+    throw workflowViolation(`Payrun ${payrun.name} was cancelled and cannot be validated.`);
   }
   if (payrun.state === 'validated' || payrun.state === 'paid') {
     throw workflowViolation(`Payrun ${payrun.name} is already ${payrun.state}.`);
   }
+
+  // Blockers are re-derived against live data rather than read back from the
+  // rows compute happened to leave behind. Between computing and validating,
+  // someone can add the missing contract that was blocking -- or, more
+  // dangerously, finalize a payslip elsewhere that now makes this one a
+  // duplicate. Gating on stored warnings answers the question as it stood at
+  // compute time, which is not the question validation is asking.
+  await refreshContextWarnings(client, payrunId);
 
   const blockers = await countBlockers(client, payrunId);
   if (blockers > 0) {
@@ -215,13 +249,8 @@ export async function markPayrunPaid(
   client: TransactionClient,
   payrunId: number,
 ): Promise<{ paid: number }> {
-  const payrun = await client.queryOne<{ name: string; state: string }>(
-    'SELECT name, state FROM payruns WHERE id = $1',
-    [payrunId],
-  );
-  if (payrun === null) {
-    throw new AppError('not_found', `Payrun ${payrunId} does not exist.`);
-  }
+  const payrun = await lockPayrun(client, payrunId);
+
   if (payrun.state !== 'validated') {
     throw workflowViolation(
       payrun.state === 'paid'
@@ -234,6 +263,12 @@ export async function markPayrunPaid(
     `UPDATE payslips SET state = 'paid' WHERE payrun_id = $1 AND state = 'validated' RETURNING id`,
     [payrunId],
   );
+
+  if (paid.length === 0) {
+    throw workflowViolation(
+      `Payrun ${payrun.name} has no validated payslips to mark paid.`,
+    );
+  }
 
   await client.query(`UPDATE payruns SET state = 'paid', paid_at = now() WHERE id = $1`, [payrunId]);
   return { paid: paid.length };

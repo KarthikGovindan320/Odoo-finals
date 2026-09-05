@@ -239,6 +239,35 @@ export function evaluateConditionExpression(
   return value;
 }
 
+/**
+ * Parsed expressions, keyed by source text.
+ *
+ * A payrun evaluates the same dozen formula strings once per employee per rule
+ * -- six thousand parses for a 500-person run on a 12-rule structure, all of
+ * them producing the identical tree. The AST is never mutated, so one parse per
+ * distinct string is enough.
+ *
+ * Bounded because rule text is user-supplied: an unbounded map keyed on it is a
+ * slow leak. The cap is far above any plausible rule count, and past it the
+ * cache simply stops growing rather than evicting, since a payrun's working set
+ * is small and stable.
+ */
+const AST_CACHE = new Map<string, Node>();
+const AST_CACHE_LIMIT = 500;
+
+function parseCached(source: string): Node {
+  const cached = AST_CACHE.get(source);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const ast = parse(source);
+  if (AST_CACHE.size < AST_CACHE_LIMIT) {
+    AST_CACHE.set(source, ast);
+  }
+  return ast;
+}
+
 function evaluateExpression(
   source: string,
   bindings: VariableBindings,
@@ -247,7 +276,7 @@ function evaluateExpression(
   let ast: Node;
 
   try {
-    ast = parse(source);
+    ast = parseCached(source);
   } catch (error) {
     if (error instanceof ExpressionSyntaxError) {
       throw new AppError(

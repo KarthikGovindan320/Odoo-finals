@@ -5,24 +5,82 @@
  * would 403 -- HR Manager, which the spec gives no payroll access at all, simply
  * has no Payroll menu. The server enforces the same boundary independently.
  */
+import { Suspense, lazy } from 'react';
+import type { ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router';
 
 import { useAuth } from '../lib/auth.tsx';
 import { LoginPage } from '../features/LoginPage.tsx';
-import { DashboardPage } from '../features/DashboardPage.tsx';
-import { EmployeesPage } from '../features/EmployeesPage.tsx';
-import { EmployeeDetailPage } from '../features/EmployeeDetailPage.tsx';
-import { ContractsPage } from '../features/ContractsPage.tsx';
-import { SchedulesPage } from '../features/SchedulesPage.tsx';
-import { AttendancePage } from '../features/AttendancePage.tsx';
-import { TimeOffPage } from '../features/TimeOffPage.tsx';
-import { PayrollPage } from '../features/PayrollPage.tsx';
-import { PayrunDetailPage } from '../features/PayrunDetailPage.tsx';
-import { PayslipDetailPage } from '../features/PayslipDetailPage.tsx';
-import { SalaryConfigPage } from '../features/SalaryConfigPage.tsx';
 import { Breadcrumb } from './Breadcrumb.tsx';
 
+/**
+ * Feature pages load on demand.
+ *
+ * Every page was statically imported into one bundle, so an Employee -- who can
+ * reach three screens -- downloaded the payrun wizard, the salary rule editor
+ * and the dashboard charts before seeing their own payslip.
+ *
+ * LoginPage is deliberately not lazy: it is the first thing an unauthenticated
+ * visitor needs, and a loading flash in front of a login form is worse than the
+ * few kilobytes it saves.
+ */
+const DashboardPage = lazy(() =>
+  import('../features/DashboardPage.tsx').then((m) => ({ default: m.DashboardPage })));
+const EmployeesPage = lazy(() =>
+  import('../features/EmployeesPage.tsx').then((m) => ({ default: m.EmployeesPage })));
+const EmployeeDetailPage = lazy(() =>
+  import('../features/EmployeeDetailPage.tsx').then((m) => ({ default: m.EmployeeDetailPage })));
+const ContractsPage = lazy(() =>
+  import('../features/ContractsPage.tsx').then((m) => ({ default: m.ContractsPage })));
+const SchedulesPage = lazy(() =>
+  import('../features/SchedulesPage.tsx').then((m) => ({ default: m.SchedulesPage })));
+const AttendancePage = lazy(() =>
+  import('../features/AttendancePage.tsx').then((m) => ({ default: m.AttendancePage })));
+const TimeOffPage = lazy(() =>
+  import('../features/TimeOffPage.tsx').then((m) => ({ default: m.TimeOffPage })));
+const PayrollPage = lazy(() =>
+  import('../features/PayrollPage.tsx').then((m) => ({ default: m.PayrollPage })));
+const PayrunDetailPage = lazy(() =>
+  import('../features/PayrunDetailPage.tsx').then((m) => ({ default: m.PayrunDetailPage })));
+const PayslipDetailPage = lazy(() =>
+  import('../features/PayslipDetailPage.tsx').then((m) => ({ default: m.PayslipDetailPage })));
+const SalaryConfigPage = lazy(() =>
+  import('../features/SalaryConfigPage.tsx').then((m) => ({ default: m.SalaryConfigPage })));
+
 type NavItem = { to: string; label: string; permission: string };
+
+/**
+ * Renders its children only when the role holds the permission.
+ *
+ * Navigation was already filtered, but the routes were not: an Employee typing
+ * /salary-config got the full page chrome and then a red 403 box where the
+ * content should be. The server refuses correctly either way -- this is about
+ * the app saying so plainly instead of appearing broken.
+ */
+function RequirePermission({
+  permission, children,
+}: {
+  permission: string;
+  children: ReactNode;
+}) {
+  const { can } = useAuth();
+
+  if (can(permission)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <div className="panel">
+      <div className="panel__body">
+        <h1>You do not have access to this</h1>
+        <p className="muted">
+          Your role does not include this area. If you think it should, ask an administrator.
+        </p>
+        <NavLink className="btn btn--primary" to="/">Go to your home page</NavLink>
+      </div>
+    </div>
+  );
+}
 
 const NAV_ITEMS: NavItem[] = [
   { to: '/employees', label: 'Employees', permission: 'employee:read' },
@@ -53,6 +111,7 @@ export function App() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main">Skip to content</a>
       <nav className="topnav">
         <span className="topnav__brand">
           <span className="topnav__mark">PP</span>
@@ -82,22 +141,24 @@ export function App() {
 
       <Breadcrumb key={location.pathname} />
 
-      <main className="page">
+      <main className="page" id="main" tabIndex={-1}>
+        <Suspense fallback={<div className="loading">Loading…</div>}>
         <Routes>
           <Route path="/" element={<Navigate to={home} replace />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/employees" element={<EmployeesPage />} />
-          <Route path="/employees/:id" element={<EmployeeDetailPage />} />
-          <Route path="/contracts" element={<ContractsPage />} />
-          <Route path="/working-schedules" element={<SchedulesPage />} />
-          <Route path="/attendance" element={<AttendancePage />} />
-          <Route path="/time-off" element={<TimeOffPage />} />
-          <Route path="/payroll" element={<PayrollPage />} />
-          <Route path="/payroll/payruns/:id" element={<PayrunDetailPage />} />
-          <Route path="/payroll/payslips/:id" element={<PayslipDetailPage />} />
-          <Route path="/salary-config" element={<SalaryConfigPage />} />
+          <Route path="/dashboard" element={<RequirePermission permission="dashboard:read"><DashboardPage /></RequirePermission>} />
+          <Route path="/employees" element={<RequirePermission permission="employee:read"><EmployeesPage /></RequirePermission>} />
+          <Route path="/employees/:id" element={<RequirePermission permission="employee:read"><EmployeeDetailPage /></RequirePermission>} />
+          <Route path="/contracts" element={<RequirePermission permission="contract:read"><ContractsPage /></RequirePermission>} />
+          <Route path="/working-schedules" element={<RequirePermission permission="schedule:read"><SchedulesPage /></RequirePermission>} />
+          <Route path="/attendance" element={<RequirePermission permission="attendance:read"><AttendancePage /></RequirePermission>} />
+          <Route path="/time-off" element={<RequirePermission permission="timeoff:read"><TimeOffPage /></RequirePermission>} />
+          <Route path="/payroll" element={<RequirePermission permission="payrun:read"><PayrollPage /></RequirePermission>} />
+          <Route path="/payroll/payruns/:id" element={<RequirePermission permission="payrun:read"><PayrunDetailPage /></RequirePermission>} />
+          <Route path="/payroll/payslips/:id" element={<RequirePermission permission="payrun:read"><PayslipDetailPage /></RequirePermission>} />
+          <Route path="/salary-config" element={<RequirePermission permission="salary_config:read"><SalaryConfigPage /></RequirePermission>} />
           <Route path="*" element={<NotFound home={home} />} />
         </Routes>
+        </Suspense>
       </main>
     </div>
   );

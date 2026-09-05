@@ -12,6 +12,7 @@
  * data makes the system unusable in exactly the messy month it is most needed.
  */
 import type { TransactionClient } from '../../db/pool.ts';
+import { TENANT_TIMEZONE } from '../../../../shared/tenant.ts';
 
 export type WarningSeverity = 'blocker' | 'warning' | 'info';
 
@@ -19,28 +20,55 @@ export type WarningCode =
   | 'NO_CONTRACT'
   | 'MULTIPLE_CONTRACTS'
   | 'NO_STRUCTURE'
+  | 'RULE_ERROR'
   | 'NEGATIVE_NET'
   | 'DUPLICATE_PAYSLIP'
   | 'MISSING_BANK'
   | 'NO_SCHEDULE'
   | 'OPEN_ATTENDANCE'
   | 'PENDING_LEAVE'
+  | 'CONTRACT_CHANGED'
   | 'PARTIAL_CONTRACT'
+  | 'UNEXPLAINED_ABSENCE'
   | 'PRORATED';
 
+/**
+ * Severity has one rule: if the condition stops a payslip being computed, it is a
+ * blocker. Anything else is a warning.
+ *
+ * NO_SCHEDULE was previously a 'warning' while computeOnePayslip treated it as a
+ * hard stop -- so a payrun containing an employee with no working days validated
+ * cleanly, that payslip stayed in draft, the mailer skipped it, and the person
+ * was simply not paid, with a yellow badge as the only trace. Severity and
+ * control flow have to agree, and this is the direction they have to agree in.
+ */
 export const WARNING_SEVERITY: Record<WarningCode, WarningSeverity> = {
   NO_CONTRACT: 'blocker',
   MULTIPLE_CONTRACTS: 'blocker',
   NO_STRUCTURE: 'blocker',
+  RULE_ERROR: 'blocker',
   NEGATIVE_NET: 'blocker',
   DUPLICATE_PAYSLIP: 'blocker',
+  NO_SCHEDULE: 'blocker',
   MISSING_BANK: 'warning',
-  NO_SCHEDULE: 'warning',
   OPEN_ATTENDANCE: 'warning',
   PENDING_LEAVE: 'warning',
+  CONTRACT_CHANGED: 'warning',
   PARTIAL_CONTRACT: 'warning',
+  UNEXPLAINED_ABSENCE: 'warning',
   PRORATED: 'info',
 };
+
+/**
+ * The warnings collectContextWarnings produces. Listed once so refreshing them
+ * replaces exactly the set it regenerates and leaves computation warnings alone.
+ */
+export const CONTEXT_WARNING_CODES = [
+  'MISSING_BANK',
+  'OPEN_ATTENDANCE',
+  'PENDING_LEAVE',
+  'DUPLICATE_PAYSLIP',
+] as const satisfies readonly WarningCode[];
 
 export type DraftWarning = {
   code: WarningCode;
@@ -52,20 +80,91 @@ export function warning(code: WarningCode, message: string, payslipId: number | 
   return { code, message, payslipId };
 }
 
+/** Inserts a batch of warnings in one statement. */
+async function insertWarnings(
+  client: TransactionClient,
+  payrunId: number,
+  warnings: readonly DraftWarning[],
+): Promise<void> {
+  if (warnings.length === 0) {
+    return;
+  }
+
+  await client.query(
+    `INSERT INTO payslip_warnings (payrun_id, payslip_id, severity, code, message)
+     SELECT $1, *
+       FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[])`,
+    [
+      payrunId,
+      warnings.map((item) => item.payslipId),
+      warnings.map((item) => WARNING_SEVERITY[item.code]),
+      warnings.map((item) => item.code),
+      warnings.map((item) => item.message),
+    ] as never,
+  );
+}
+
 export async function replaceWarnings(
   client: TransactionClient,
   payrunId: number,
   warnings: readonly DraftWarning[],
 ): Promise<void> {
   await client.query('DELETE FROM payslip_warnings WHERE payrun_id = $1', [payrunId]);
+  await insertWarnings(client, payrunId, warnings);
+}
 
-  for (const item of warnings) {
-    await client.query(
-      `INSERT INTO payslip_warnings (payrun_id, payslip_id, severity, code, message)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [payrunId, item.payslipId, WARNING_SEVERITY[item.code], item.code, item.message],
+/**
+ * Re-derives the data-quality warnings for a payrun against current data,
+ * replacing the stored ones of those kinds.
+ *
+ * Only the context warnings are refreshed -- the ones that depend on rows
+ * elsewhere in the system rather than on the computation. Warnings produced by
+ * the computation itself (NO_CONTRACT, RULE_ERROR, NEGATIVE_NET and so on)
+ * describe the figures actually stored on the payslip and are still true; the
+ * only way to change them is to compute again.
+ */
+export async function refreshContextWarnings(
+  client: TransactionClient,
+  payrunId: number,
+): Promise<void> {
+  const payrun = await client.queryOne<{ period_start: string; period_end: string }>(
+    'SELECT period_start::text, period_end::text FROM payruns WHERE id = $1',
+    [payrunId],
+  );
+  if (payrun === null) {
+    return;
+  }
+
+  const payslips = await client.query<{ id: number; employee_id: number; employee_name: string }>(
+    `SELECT p.id, p.employee_id,
+            e.first_name || ' ' || e.last_name AS employee_name
+       FROM payslips p
+       JOIN employees e ON e.id = p.employee_id
+      WHERE p.payrun_id = $1`,
+    [payrunId],
+  );
+
+  const refreshed: DraftWarning[] = [];
+  for (const payslip of payslips) {
+    refreshed.push(
+      ...(await collectContextWarnings(client, {
+        payslipId: payslip.id,
+        employeeId: payslip.employee_id,
+        employeeName: payslip.employee_name,
+        periodStart: payrun.period_start,
+        periodEnd: payrun.period_end,
+      })),
     );
   }
+
+  const contextCodes = CONTEXT_WARNING_CODES.map((code) => `'${code}'`).join(', ');
+  await client.query(
+    `DELETE FROM payslip_warnings
+      WHERE payrun_id = $1 AND code IN (${contextCodes})`,
+    [payrunId],
+  );
+
+  await insertWarnings(client, payrunId, refreshed);
 }
 
 export async function countBlockers(
@@ -123,8 +222,8 @@ export async function collectContextWarnings(
        FROM attendance_records
       WHERE employee_id = $1
         AND check_out IS NULL
-        AND (check_in AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $2::date AND $3::date`,
-    [input.employeeId, input.periodStart, input.periodEnd],
+        AND (check_in AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`,
+    [input.employeeId, input.periodStart, input.periodEnd, TENANT_TIMEZONE],
   );
 
   if ((openAttendance?.total ?? 0) > 0) {

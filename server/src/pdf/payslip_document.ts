@@ -12,7 +12,7 @@
  */
 import PDFDocument from 'pdfkit';
 
-import { formatMoney } from '../lib/money.ts';
+import { formatMoneyForPrint } from '../lib/money.ts';
 
 export type PayslipDocumentData = {
   number: string;
@@ -42,8 +42,15 @@ export type PayslipDocumentData = {
     category_code: string;
     category_sign: number;
     amount: number;
+    source_expression: string;
   }>;
 };
+
+/** Lowest y a line may start at before the page is full. */
+const LAST_LINE_Y = 700;
+
+/** Height of the Gross row plus the net box, kept together on one page. */
+const TOTALS_BLOCK_HEIGHT = 60;
 
 const PLUM = '#714B67';
 const TEAL = '#017E84';
@@ -154,13 +161,21 @@ function drawDocument(document: PDFKit.PDFDocument, data: PayslipDocumentData): 
     document.fillColor(GRAY_900).text(line.rule_name, left + 62, cursor, { width: 240 });
     document.fillColor(GRAY_600).text(line.category_code, left + 305, cursor, { width: 90 });
     document.fillColor(line.category_sign < 0 ? '#DC3545' : GRAY_900)
-      .text(formatMoney(signed, data.currency_code), 460, cursor, { width: 87, align: 'right' });
+      .text(formatMoneyForPrint(signed, data.currency_code), 460, cursor, { width: 87, align: 'right' });
 
     cursor += 15;
-    if (cursor > 720) {
+    if (cursor > LAST_LINE_Y) {
       document.addPage();
-      cursor = 60;
+      cursor = continuationHeader(document, data);
     }
+  }
+
+  // The totals block is 60pt tall including the net box. Checking only inside
+  // the line loop meant a structure with enough rules ended near the bottom and
+  // then drew Gross and NET PAYABLE over the footer.
+  if (cursor + TOTALS_BLOCK_HEIGHT > LAST_LINE_Y) {
+    document.addPage();
+    cursor = continuationHeader(document, data);
   }
 
   cursor += 6;
@@ -170,13 +185,13 @@ function drawDocument(document: PDFKit.PDFDocument, data: PayslipDocumentData): 
   document.font('Helvetica').fontSize(9).fillColor(GRAY_600)
     .text('Gross', left + 305, cursor, { width: 90 });
   document.fillColor(GRAY_900)
-    .text(formatMoney(data.gross_amount, data.currency_code), 460, cursor, { width: 87, align: 'right' });
+    .text(formatMoneyForPrint(data.gross_amount, data.currency_code), 460, cursor, { width: 87, align: 'right' });
   cursor += 20;
 
   document.rect(left + 300, cursor - 6, 247, 28).fill(TEAL);
   document.fillColor('#FFFFFF').font('Helvetica-Bold').fontSize(11)
     .text('NET PAYABLE', left + 310, cursor + 2, { width: 100 })
-    .text(formatMoney(data.net_amount, data.currency_code), 440, cursor + 2, { width: 97, align: 'right' });
+    .text(formatMoneyForPrint(data.net_amount, data.currency_code), 440, cursor + 2, { width: 97, align: 'right' });
 
   document.fillColor(GRAY_600).font('Helvetica').fontSize(7)
     .text(
@@ -184,6 +199,20 @@ function drawDocument(document: PDFKit.PDFDocument, data: PayslipDocumentData): 
       'and do not change if salary rules are edited later.',
       left, 780, { width: right - left, align: 'center' },
     );
+}
+
+/**
+ * Identifies a continuation page and returns the y to resume drawing at.
+ *
+ * A payslip that runs to two pages previously carried nothing on the second but
+ * the numbers -- no payslip number, no employee, no page marker -- so a loose
+ * sheet could not be matched back to anyone.
+ */
+function continuationHeader(document: PDFKit.PDFDocument, data: PayslipDocumentData): number {
+  document.fillColor(GRAY_600).fontSize(8).font('Helvetica')
+    .text(`${data.number} — ${data.employee_name} (continued)`, 48, 40);
+  horizontalRule(document, 54);
+  return 68;
 }
 
 function horizontalRule(document: PDFKit.PDFDocument, y: number): void {

@@ -7,10 +7,12 @@
  * into existence when Create Payrun is pressed.
  */
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
 import { useResource, type Page } from '../lib/use_resource.ts';
+import { useReference } from '../lib/use_reference.ts';
+import { useDebounced } from '../lib/use_debounced.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
@@ -49,7 +51,8 @@ export function PayrollPage() {
   const [state, setState] = useState('');
   const [search, setSearch] = useState('');
 
-  const payrunPath = `/payruns${queryString({ q: search, state, page, page_size: 25 })}`;
+  const settledSearch = useDebounced(search);
+  const payrunPath = `/payruns${queryString({ q: settledSearch, state, page, page_size: 25 })}`;
   const payslipPath = `/payslips${queryString({
     employee_id: employeeFilter, state, page, page_size: 25,
   })}`;
@@ -136,7 +139,7 @@ export function PayrollPage() {
       {employeeFilter !== '' && tab === 'payslips' && (
         <div className="alert alert--info">
           <span>Showing payslips for one employee only.</span>
-          <a href="/payroll?tab=payslips">Show everyone</a>
+          <Link to="/payroll?tab=payslips">Show everyone</Link>
         </div>
       )}
       {active.error !== null && <div className="error-box">{active.error}</div>}
@@ -212,7 +215,7 @@ function PayrunWizard({
   onClose: () => void;
   onCreated: (id: number) => void;
 }) {
-  const reference = useResource<Reference>('/reference');
+  const reference = useReference();
 
   const [step, setStep] = useState<1 | 2>(1);
   const [scope, setScope] = useState<Record<string, string>>({
@@ -225,6 +228,8 @@ function PayrunWizard({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [candidateFilter, setCandidateFilter] = useState('');
+  const [showIneligible, setShowIneligible] = useState(true);
 
   const set = (key: string) => (event: { target: { value: string } }): void =>
     setScope((previous) => ({ ...previous, [key]: event.target.value }));
@@ -299,6 +304,17 @@ function PayrunWizard({
   const eligible = candidates.filter((row) => row.is_eligible);
   const ineligible = candidates.filter((row) => !row.is_eligible);
 
+  // Selecting carefully matters most at the scale where an unfiltered list of
+  // every candidate stops being readable, so the step filters rather than
+  // rendering the whole company and trusting the reader to scroll.
+  const needle = candidateFilter.trim().toLowerCase();
+  const shown = needle === ''
+    ? candidates
+    : candidates.filter((row) =>
+        row.employee_name.toLowerCase().includes(needle)
+        || row.employee_number.toLowerCase().includes(needle)
+        || (row.department_name ?? '').toLowerCase().includes(needle));
+
   return (
     <Modal
       title={step === 1 ? 'New payrun — step 1 of 2: scope' : 'New payrun — step 2 of 2: employees'}
@@ -366,13 +382,26 @@ function PayrunWizard({
             with the reason rather than hidden.
           </p>
 
-          <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <input
+              className="input"
+              type="search"
+              style={{ flex: '1 1 220px', minWidth: 180 }}
+              placeholder="Filter by name, number or department…"
+              aria-label="Filter candidates"
+              value={candidateFilter}
+              onChange={(event) => setCandidateFilter(event.target.value)}
+            />
             <button type="button" className="btn btn--sm"
               onClick={() => setSelected(new Set(eligible.map((row) => row.employee_id)))}>
               Select all eligible
             </button>
             <button type="button" className="btn btn--sm" onClick={() => setSelected(new Set())}>
               Clear selection
+            </button>
+            <button type="button" className="btn btn--sm"
+              onClick={() => setShowIneligible(!showIneligible)}>
+              {showIneligible ? 'Hide excluded' : `Show excluded (${ineligible.length})`}
             </button>
           </div>
 
@@ -385,7 +414,9 @@ function PayrunWizard({
               </tr>
             </thead>
             <tbody>
-              {candidates.map((row) => (
+              {shown
+                .filter((row) => showIneligible || row.is_eligible)
+                .map((row) => (
                 <tr key={row.employee_id} style={row.is_eligible ? undefined : { opacity: 0.55 }}>
                   <td>
                     <input
@@ -422,6 +453,10 @@ function PayrunWizard({
               ))}
             </tbody>
           </table>
+
+          {shown.length === 0 && (
+            <div className="table__empty">No candidates match that filter.</div>
+          )}
         </>
       )}
     </Modal>

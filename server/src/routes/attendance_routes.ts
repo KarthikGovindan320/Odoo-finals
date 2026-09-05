@@ -2,21 +2,27 @@
  * Attendance.
  *
  * Two permissions, not one. attendance:write lets an employee record their own
- * presence; attendance:correct lets authorised staff change a record after the
- * fact, and the database refuses a correction that does not say who made it and
- * why. Backdating is deliberately reserved for correctors: for self-service it
- * is the difference between a convenience and a fraud vector.
+ * presence -- check in, and close their own punch; attendance:correct lets
+ * authorised staff change a record after the fact, and the database refuses a
+ * correction that does not say who made it and why. Backdating is deliberately
+ * reserved for correctors: for self-service it is the difference between a
+ * convenience and a fraud vector.
+ *
+ * "Today" is decided by the database in the tenant timezone, against the parsed
+ * instant rather than the text the client sent -- both halves matter, and see
+ * the note on the POST handler for what each of them was getting wrong.
  */
 import { z } from 'zod';
 
-import { AppError, forbidden, notFound } from '../errors/app_error.ts';
-import { query, queryOne, withTransaction } from '../db/pool.ts';
+import { AppError, forbidden, notFound, workflowViolation } from '../errors/app_error.ts';
+import { query, queryOne, withTransaction, insertedId } from '../db/pool.ts';
 import type { QueryParameter } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
 import { attendanceInput } from '../../../shared/schemas/hr.ts';
 import { identifier, isoDate, paginationQuery } from '../../../shared/schemas/common.ts';
+import { TENANT_TIMEZONE } from '../../../shared/tenant.ts';
 
 type AttendanceRow = {
   id: number;
@@ -55,12 +61,16 @@ attendance.get('/', 'attendance:read', async (request, response) => {
     conditions.push(`a.status = $${params.length}`);
   }
   if (filters.from) {
-    params.push(filters.from);
-    conditions.push(`(a.check_in AT TIME ZONE 'Asia/Kolkata')::date >= $${params.length}::date`);
+    params.push(TENANT_TIMEZONE, filters.from);
+    conditions.push(
+      `(a.check_in AT TIME ZONE $${params.length - 1})::date >= $${params.length}::date`,
+    );
   }
   if (filters.to) {
-    params.push(filters.to);
-    conditions.push(`(a.check_in AT TIME ZONE 'Asia/Kolkata')::date <= $${params.length}::date`);
+    params.push(TENANT_TIMEZONE, filters.to);
+    conditions.push(
+      `(a.check_in AT TIME ZONE $${params.length - 1})::date <= $${params.length}::date`,
+    );
   }
 
   const where = conditions.join(' AND ');
@@ -96,9 +106,21 @@ attendance.post('/', 'attendance:write', validateBody(attendanceInput), async (r
 
   // Self-service records today only. Anything historical is a correction, and
   // corrections are a separate permission with an audit trail attached.
+  //
+  // "Today" is asked of the database in the tenant timezone, and asked about the
+  // parsed instant rather than the string the client sent. Both halves matter:
+  // comparing against new Date().toISOString() used UTC, so between midnight and
+  // 05:30 IST an employee's genuine check-in was refused as not-today; and
+  // comparing string prefixes let a caller pick their own offset to shift which
+  // calendar day the timestamp appeared to fall on.
   if (request.accessScope === 'own') {
-    const today = new Date().toISOString().slice(0, 10);
-    if (!input.check_in.startsWith(today)) {
+    const sameDay = await queryOne<{ is_today: boolean }>(
+      `SELECT ($1::timestamptz AT TIME ZONE $2)::date
+              = (now() AT TIME ZONE $2)::date AS is_today`,
+      [input.check_in, TENANT_TIMEZONE],
+    );
+
+    if (sameDay?.is_today !== true) {
       throw forbidden(
         'You can only record attendance for today. Ask HR to correct an earlier day.',
       );
@@ -116,10 +138,70 @@ attendance.post('/', 'attendance:write', validateBody(attendanceInput), async (r
         input.check_out ? 'present' : 'missing_checkout',
       ],
     );
-    return (row as { id: number }).id;
+    return insertedId(row, 'an attendance record');
   }, request.auth?.userId);
 
   response.status(201).json(await queryOne('SELECT * FROM attendance_records WHERE id = $1', [id]));
+});
+
+/**
+ * Closing your own open punch.
+ *
+ * Separate from PATCH on purpose. Editing an attendance record is a correction:
+ * it needs attendance:correct, it demands a written reason, and it stamps the
+ * row as manually edited. Checking out at the end of your own shift is none of
+ * those things -- it is the second half of an ordinary punch, and routing it
+ * through the correction endpoint would either hand every employee the
+ * corrector permission or mark every normal day as edited.
+ *
+ * The check-out time is the server's clock, not the caller's, so nobody extends
+ * their own day by sending a later timestamp.
+ */
+attendance.post('/:id/check-out', 'attendance:write', async (request, response) => {
+  const id = parseOrThrow(identifier, request.params.id);
+
+  const record = await queryOne<{ employee_id: number; check_out: string | null; is_today: boolean }>(
+    `SELECT employee_id, check_out,
+            (check_in AT TIME ZONE $2)::date = (now() AT TIME ZONE $2)::date AS is_today
+       FROM attendance_records WHERE id = $1`,
+    [id, TENANT_TIMEZONE],
+  );
+
+  if (record === null) {
+    throw notFound('Attendance record', id);
+  }
+  requireOwnEmployee(request, record.employee_id);
+
+  if (record.check_out !== null) {
+    throw workflowViolation('That attendance record already has a check-out.');
+  }
+
+  // Closing yesterday's forgotten punch with today's clock would invent hours.
+  // That is a correction, and corrections are somebody else's permission.
+  if (request.accessScope === 'own' && !record.is_today) {
+    throw forbidden(
+      'That check-in was not today, so it can only be closed by HR as a correction. ' +
+        'Ask them to set the time you actually left.',
+    );
+  }
+
+  const updated = await withTransaction(
+    (client) =>
+      client.queryOne(
+        `UPDATE attendance_records
+            SET check_out = now(), status = 'present'
+          WHERE id = $1 AND check_out IS NULL
+      RETURNING id, employee_id, check_in, check_out, worked_hours, status`,
+        [id],
+      ),
+    request.auth?.userId,
+  );
+
+  if (updated === null) {
+    throw workflowViolation('That attendance record was closed by someone else a moment ago.');
+  }
+
+  response.json(updated);
 });
 
 attendance.patch('/:id', 'attendance:correct', validateBody(attendanceInput), async (request, response) => {
@@ -143,10 +225,18 @@ attendance.patch('/:id', 'attendance:correct', validateBody(attendanceInput), as
   }
 
   await withTransaction(async (client) => {
+    // Supplying the missing check-out is the whole point of most corrections, so
+    // the status has to move with it. Leaving it alone meant a record stayed
+    // 'missing_checkout' after being completed -- still in the exceptions filter,
+    // still raising OPEN_ATTENDANCE on every payrun.
     await client.query(
       `UPDATE attendance_records
           SET check_in = $2, check_out = $3,
-              status = CASE WHEN $3::timestamptz IS NULL THEN 'missing_checkout' ELSE status END,
+              status = CASE
+                         WHEN $3::timestamptz IS NULL THEN 'missing_checkout'
+                         WHEN status = 'missing_checkout' THEN 'present'
+                         ELSE status
+                       END,
               is_manually_edited = true, edited_by_user_id = $4, edited_at = now(), edit_reason = $5
         WHERE id = $1`,
       [id, input.check_in, input.check_out ?? null, request.auth?.userId ?? null, input.edit_reason ?? null],

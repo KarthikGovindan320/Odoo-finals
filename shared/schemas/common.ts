@@ -14,6 +14,39 @@ export const isoDate = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD.')
   .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), 'That is not a real date.');
 
+/**
+ * An absolute instant: ISO 8601 with a date, a time, and an offset or Z.
+ *
+ * Validated here rather than left to Postgres. `z.string().min(1)` accepted any
+ * non-empty text and handed it to a timestamptz column, so a mistyped time came
+ * back as 22007 from the driver and, unmapped, as a 500 — telling a user that
+ * something had gone wrong on our side when they had simply typed a bad date.
+ *
+ * The offset is required. Without one the instant depends on whoever parses it,
+ * which for attendance is the difference between two calendar days.
+ */
+export const isoDateTime = z
+  .string()
+  .trim()
+  .regex(
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/,
+    'Enter a date and time including a timezone, e.g. 2026-09-05T09:30:00+05:30.',
+  )
+  .refine((value) => !Number.isNaN(Date.parse(value)), 'That is not a real date and time.');
+
+/** A wall-clock time of day, bounded to real hours and minutes. */
+export const timeOfDay = z
+  .string()
+  .trim()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Enter a time as HH:MM, between 00:00 and 23:59.');
+
+/**
+ * Upper bounds matching the numeric(p,s) columns behind these fields, so an
+ * out-of-range amount is a field error rather than a 22003 from the driver.
+ */
+export const MAX_LEAVE_AMOUNT = 999_999.99; // numeric(8,2)
+export const MAX_RULE_AMOUNT = 9_999_999_999.99; // numeric(12,2)
+
 export const email = z
   .string()
   .trim()
@@ -39,19 +72,11 @@ export const identifier = z.coerce
 
 export const optionalIdentifier = identifier.nullable().optional();
 
-/** Dates must be ordered. Used by contracts, allocations, leave and payruns. */
-export const orderedDates = <Shape extends { start: string; end?: string | null }>(
-  label: string,
-) =>
-  (value: Shape, ctx: z.RefinementCtx): void => {
-    if (value.end != null && value.end < value.start) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['end'],
-        message: `${label} cannot end before it starts.`,
-      });
-    }
-  };
+// An `orderedDates` helper used to sit here, exported and never imported: every
+// schema hand-rolls the same two-line refinement instead, because each names its
+// own fields (end_date, valid_to, date_to, period_end) and the shared version
+// could only express one of them. Removed rather than kept as a sixth copy that
+// happens to be unreachable.
 
 export const paginationQuery = z.object({
   page: z.coerce.number().int().min(1).default(1),

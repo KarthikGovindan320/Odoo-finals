@@ -13,7 +13,7 @@ import nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
 
 import { config } from '../config/env.ts';
-import { formatMoney } from '../lib/money.ts';
+import { formatMoneyForPrint } from '../lib/money.ts';
 
 let cachedTransport: Transporter | null = null;
 
@@ -26,6 +26,16 @@ function transport(): Transporter {
       // send and nothing to negotiate.
       secure: false,
       ignoreTLS: true,
+      // A bulk send is the normal case here, and unpooled nodemailer opens a
+      // fresh connection per message -- sixty connections for sixty payslips.
+      pool: true,
+      maxConnections: 4,
+      maxMessages: 100,
+      // Without these a single unresponsive server holds the whole run for the
+      // default two minutes per message.
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 20_000,
     });
   }
   return cachedTransport;
@@ -60,7 +70,7 @@ export async function sendPayslip(mail: PayslipMail): Promise<DeliveryOutcome> {
       text:
         `Hello ${mail.employeeName},\n\n` +
         `Your payslip for ${mail.periodStart} to ${mail.periodEnd} is attached.\n\n` +
-        `Net payable: ${formatMoney(mail.netAmount, mail.currencyCode)}\n` +
+        `Net payable: ${formatMoneyForPrint(mail.netAmount, mail.currencyCode)}\n` +
         `Reference: ${mail.payslipNumber}\n\n` +
         'If anything looks wrong, reply to this message and the payroll team will review it.\n\n' +
         'PeoplePay360 Payroll',

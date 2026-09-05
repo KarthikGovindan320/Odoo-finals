@@ -11,6 +11,7 @@ import type { FormEvent } from 'react';
 
 import { api, ApiError } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
+import { useReference } from '../lib/use_reference.ts';
 import { Modal } from '../components/Chrome.tsx';
 import { SelectField, TextAreaField, TextField } from '../components/Field.tsx';
 import { employeeInput } from '../../../shared/schemas/hr.ts';
@@ -40,7 +41,7 @@ type Props = {
 };
 
 export function EmployeeFormModal({ employeeId, initial, onClose, onSaved }: Props) {
-  const reference = useResource<Reference>('/reference');
+  const reference = useReference();
   const [values, setValues] = useState<EmployeeFormValues>({ ...EMPTY, ...initial });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -48,7 +49,26 @@ export function EmployeeFormModal({ employeeId, initial, onClose, onSaved }: Pro
 
   const set = (name: string) => (
     event: { target: { value: string } },
-  ): void => setValues((previous) => ({ ...previous, [name]: event.target.value }));
+  ): void =>
+    setValues((previous) => {
+      const next = { ...previous, [name]: event.target.value };
+
+      // Dependent fields are cleared with the field they hang off, so the form
+      // cannot submit a stale value the user can no longer see or correct.
+      if (name === 'department_id' && event.target.value !== previous.department_id) {
+        // A position belongs to a department; keeping the old one submits a
+        // position from a different department, which nothing downstream checks.
+        next.job_position_id = '';
+      }
+      if (name === 'status' && event.target.value !== 'terminated') {
+        // The termination date input is hidden for any other status, so leaving
+        // a value behind produced a validation error against a field that was
+        // not on screen.
+        next.termination_date = '';
+      }
+
+      return next;
+    });
 
   /** Blank optional selects and dates must go to the API as null, not ''. */
   const toPayload = (): Record<string, unknown> => {

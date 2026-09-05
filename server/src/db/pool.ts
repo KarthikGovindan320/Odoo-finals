@@ -26,10 +26,23 @@ pg.types.setTypeParser(NUMERIC_OID, (value: string) => Number.parseFloat(value))
 pg.types.setTypeParser(INT8_OID, (value: string) => Number.parseInt(value, 10));
 pg.types.setTypeParser(DATE_OID, (value: string) => value);
 
+/**
+ * Pool size.
+ *
+ * The dashboard fans out eight panel queries in one Promise.all, so a max of 10
+ * meant two concurrent dashboard loads saturated the pool and every other
+ * request waited out connectionTimeoutMillis and then failed. The ceiling now
+ * leaves room for that fan-out several times over, and is configurable for a
+ * deployment that knows its own Postgres max_connections.
+ */
 export const pool = new pg.Pool({
-  max: 10,
+  max: Number(process.env.PGPOOL_MAX ?? 25),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,
+  // A statement that has run this long is not going to finish usefully, and
+  // holding the connection helps nobody. Payrun compute is the longest thing
+  // here and runs in well under a second per employee.
+  statement_timeout: Number(process.env.PG_STATEMENT_TIMEOUT_MS ?? 30_000),
 });
 
 pool.on('error', (error: Error) => {
@@ -92,6 +105,8 @@ export async function withTransaction<Result>(
     },
   };
 
+  let failed = false;
+
   try {
     await client.query('BEGIN');
     if (actorUserId !== undefined && actorUserId !== null) {
@@ -105,13 +120,42 @@ export async function withTransaction<Result>(
     await client.query('COMMIT');
     return result;
   } catch (error) {
-    await client.query('ROLLBACK');
+    failed = true;
+    try {
+      await client.query('ROLLBACK');
+    } catch (rollbackError) {
+      // A rollback that itself fails almost always means the connection is gone.
+      // Letting it propagate would replace the real error -- the one describing
+      // what the caller did wrong -- with a connection error from the cleanup.
+      console.error(
+        '[db] rollback failed; the original error is being rethrown:',
+        rollbackError instanceof Error ? rollbackError.message : rollbackError,
+      );
+    }
     throw error;
   } finally {
-    client.release();
+    // Passing the error discards the connection instead of returning a possibly
+    // poisoned one (mid-transaction, or with a lost socket) to the pool.
+    client.release(failed || undefined);
   }
 }
 
 export async function closePool(): Promise<void> {
   await pool.end();
+}
+
+/**
+ * The id from an `INSERT ... RETURNING id`, or a clear error.
+ *
+ * `(row as { id: number }).id` was written seven times across the codebase to
+ * get past `Row | null`. It is correct for a RETURNING clause in practice, but
+ * it defeats `strict` exactly where a schema drift or a silently-skipped insert
+ * would otherwise be caught -- and when it is wrong the symptom is
+ * "Cannot read properties of null", far from the statement that caused it.
+ */
+export function insertedId(row: { id: number } | null, what: string): number {
+  if (row === null) {
+    throw new Error(`Inserting ${what} returned no row, so it has no id.`);
+  }
+  return row.id;
 }

@@ -1,0 +1,72 @@
+# Runs the checks that were already in package.json but that nothing ran
+# automatically: typecheck, unit tests, and a production build of the web app.
+#
+# The end-to-end flow script (npm run verify:flows) needs a seeded database and a
+# running server, so it gets its own job with Postgres as a service.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  static:
+    name: Typecheck, tests, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm --workspace web run build
+
+  flows:
+    name: End-to-end demo flows
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: peoplepay360
+          POSTGRES_USER: peoplepay
+          POSTGRES_PASSWORD: peoplepay
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U peoplepay -d peoplepay360"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGDATABASE: peoplepay360
+      PGUSER: peoplepay
+      PGPASSWORD: peoplepay
+      NODE_ENV: development
+      # The reset guard refuses a non-interactive drop unless the target is named.
+      CONFIRM_RESET_DATABASE: peoplepay360
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run db:reset
+      - name: Start the API
+        run: |
+          npm run dev:server > /tmp/server.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:4000/api/health && break
+            sleep 1
+          done
+      - run: npm run verify:flows
+      - name: Server log on failure
+        if: failure()
+        run: cat /tmp/server.log

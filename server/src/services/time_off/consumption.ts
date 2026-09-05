@@ -40,14 +40,39 @@ export async function findAvailableAllocations(
   dateFrom: string,
   dateTo: string,
 ): Promise<AvailableAllocation[]> {
+  // Overlap, not containment.
+  //
+  // This previously required a single allocation to span the entire leave
+  // (valid_from <= dateFrom AND valid_to >= dateTo), which contradicted the
+  // function directly below it: planConsumption exists to split a request across
+  // several allocations, and could never be given more than one. The visible
+  // symptom was leave across a year boundary -- 28 December to 3 January -- being
+  // refused as uncovered while both years showed full balance.
+  //
+  // The rows are locked here rather than merely read. Two approvals for the same
+  // employee would otherwise both see the same remaining balance and both write
+  // consumption rows against it; the database trigger added in migration 014
+  // catches that, but taking the lock at the point of decision turns a raised
+  // exception into an ordinary wait.
+  await client.query(
+    `SELECT a.id
+       FROM time_off_allocations a
+      WHERE a.employee_id = $1
+        AND a.time_off_type_id = $2
+        AND a.state = 'approved'
+        AND a.validity && daterange($3::date, $4::date, '[]')
+      ORDER BY a.id
+        FOR UPDATE`,
+    [employeeId, timeOffTypeId, dateFrom, dateTo],
+  );
+
   return client.query<AvailableAllocation>(
     `SELECT allocation_id, valid_from, valid_to, remaining_amount
        FROM v_time_off_balances
       WHERE employee_id = $1
         AND time_off_type_id = $2
         AND remaining_amount > 0
-        AND valid_from <= $3::date
-        AND valid_to   >= $4::date
+        AND daterange(valid_from, valid_to, '[]') && daterange($3::date, $4::date, '[]')
       ORDER BY valid_to ASC, allocation_id ASC`,
     [employeeId, timeOffTypeId, dateFrom, dateTo],
   );

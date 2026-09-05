@@ -6,14 +6,15 @@
  * invalidates, and there is no signing key to rotate or leak. The cost is a
  * lookup per request, which is one indexed primary-key-ish read.
  *
- * The permission set is loaded with the session in the same query, so
- * authorisation never needs a second round trip and can never see a stale role.
+ * The permission set is loaded with the session in one round trip -- the role's
+ * permissions are aggregated into the same statement -- so authorisation never
+ * needs a second query and can never see a role that has changed underneath it.
  */
 import { createHash, randomBytes } from 'node:crypto';
 
 import { AppError } from '../errors/app_error.ts';
 import { config } from '../config/env.ts';
-import { pool, query, queryOne } from '../db/pool.ts';
+import { pool, queryOne } from '../db/pool.ts';
 import { verifyPassword } from '../lib/password.ts';
 
 export const SESSION_COOKIE_NAME = 'pp360_session';
@@ -47,17 +48,23 @@ type UserRow = {
   employee_name: string | null;
 };
 
-async function loadPermissions(roleCode: string): Promise<Map<string, AccessScope>> {
-  const rows = await query<{ code: string; scope: AccessScope }>(
-    `SELECT p.code, rp.scope
-       FROM role_permissions rp
-       JOIN roles r       ON r.id = rp.role_id
-       JOIN permissions p ON p.id = rp.permission_id
-      WHERE r.code = $1`,
-    [roleCode],
-  );
+/**
+ * The role's permissions as a JSON object of code -> scope, aggregated in SQL so
+ * it can ride along with the row that needs it.
+ */
+const PERMISSIONS_SUBQUERY = `
+  COALESCE((
+    SELECT jsonb_object_agg(p.code, rp.scope)
+      FROM role_permissions rp
+      JOIN permissions p ON p.id = rp.permission_id
+     WHERE rp.role_id = r.id
+  ), '{}'::jsonb) AS permissions`;
 
-  return new Map(rows.map((row) => [row.code, row.scope]));
+function toPermissionMap(raw: unknown): Map<string, AccessScope> {
+  if (raw === null || typeof raw !== 'object') {
+    return new Map();
+  }
+  return new Map(Object.entries(raw as Record<string, AccessScope>));
 }
 
 export async function login(
@@ -65,11 +72,12 @@ export async function login(
   password: string,
   request: { ip?: string; userAgent?: string },
 ): Promise<{ token: string; user: AuthenticatedUser }> {
-  const user = await queryOne<UserRow>(
+  const user = await queryOne<UserRow & { permissions: unknown }>(
     `SELECT u.id, u.email, u.password_hash, u.password_salt, u.is_active,
             r.code AS role_code, r.name AS role_name,
             e.id   AS employee_id,
-            e.first_name || ' ' || e.last_name AS employee_name
+            e.first_name || ' ' || e.last_name AS employee_name,
+            ${PERMISSIONS_SUBQUERY}
        FROM users u
        JOIN roles r      ON r.id = u.role_id
        LEFT JOIN employees e ON e.user_id = u.id
@@ -127,7 +135,7 @@ export async function login(
       roleName: user.role_name,
       employeeId: user.employee_id,
       employeeName: user.employee_name,
-      permissions: await loadPermissions(user.role_code),
+      permissions: toPermissionMap(user.permissions),
     },
   };
 }
@@ -140,10 +148,12 @@ export async function resolveSession(token: string): Promise<AuthenticatedUser |
     role_name: string;
     employee_id: number | null;
     employee_name: string | null;
+    permissions: unknown;
   }>(
     `SELECT u.id AS user_id, u.email, r.code AS role_code, r.name AS role_name,
             e.id AS employee_id,
-            e.first_name || ' ' || e.last_name AS employee_name
+            e.first_name || ' ' || e.last_name AS employee_name,
+            ${PERMISSIONS_SUBQUERY}
        FROM sessions s
        JOIN users u ON u.id = s.user_id
        JOIN roles r ON r.id = u.role_id
@@ -166,7 +176,7 @@ export async function resolveSession(token: string): Promise<AuthenticatedUser |
     roleName: row.role_name,
     employeeId: row.employee_id,
     employeeName: row.employee_name,
-    permissions: await loadPermissions(row.role_code),
+    permissions: toPermissionMap(row.permissions),
   };
 }
 

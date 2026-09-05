@@ -1,5 +1,5 @@
 /** SQL for contracts. */
-import { query, queryOne } from '../db/pool.ts';
+import { query, queryOne, insertedId } from '../db/pool.ts';
 import type { QueryParameter, TransactionClient } from '../db/pool.ts';
 import type { ContractInput } from '../../../shared/schemas/hr.ts';
 
@@ -68,7 +68,8 @@ export async function listContracts(filters: {
     conditions.push(`c.state = $${params.length}`);
   }
   if (filters.search) {
-    params.push(`%${filters.search}%`);
+    // See employee_repository: wildcards in the term are escaped, not honoured.
+    params.push(`%${filters.search.replace(/([\\%_])/g, '\\$1')}%`);
     conditions.push(
       `(c.reference ILIKE $${params.length} OR e.first_name ILIKE $${params.length}
         OR e.last_name ILIKE $${params.length} OR e.employee_number ILIKE $${params.length})`,
@@ -101,10 +102,29 @@ const WRITABLE = [
   'state', 'notes',
 ] as const;
 
+/**
+ * Columns where a blank means "no value" and must be stored as NULL: optional
+ * foreign keys and the optional end date.
+ *
+ * The distinction matters because `notes` is NOT NULL DEFAULT ''. Converting
+ * every blank to NULL, as this used to, sent NULL into that column and produced
+ * a 23502 the moment anyone saved a contract without notes.
+ */
+const NULL_WHEN_BLANK = new Set<string>([
+  'end_date', 'department_id', 'job_position_id', 'employment_type_id',
+  'working_schedule_id', 'salary_structure_id',
+]);
+
 function toParams(input: ContractInput): QueryParameter[] {
   return WRITABLE.map((column) => {
     const value = (input as Record<string, unknown>)[column];
-    return value === undefined || value === '' ? null : (value as QueryParameter);
+    if (value === undefined || value === null) {
+      return null;
+    }
+    if (value === '') {
+      return NULL_WHEN_BLANK.has(column) ? null : '';
+    }
+    return value as QueryParameter;
   });
 }
 
@@ -117,7 +137,7 @@ export async function insertContract(
      VALUES (${WRITABLE.map((_, index) => `$${index + 1}`).join(', ')}) RETURNING id`,
     toParams(input),
   );
-  return (row as { id: number }).id;
+  return insertedId(row, 'a contract');
 }
 
 export async function updateContract(

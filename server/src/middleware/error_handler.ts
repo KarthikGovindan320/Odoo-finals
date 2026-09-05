@@ -10,7 +10,7 @@
 import type { NextFunction, Request, Response } from 'express';
 
 import { AppError } from '../errors/app_error.ts';
-import { isProduction } from '../config/env.ts';
+import { exposeErrorDetails } from '../config/env.ts';
 
 type PostgresError = { code: string; constraint?: string; detail?: string };
 
@@ -36,9 +36,46 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
     'This employee already has approved time off that overlaps these dates.',
   payslip_one_per_employee_per_run:
     'This employee already has a payslip in this payrun.',
-  payslip_no_duplicate_finalized:
-    'This employee already has a finalized payslip for this exact period. Paying this one as well ' +
-    'would pay them twice.',
+  payslip_no_overlapping_finalized:
+    'This employee already has a finalized payslip covering part of this period. Paying this one ' +
+    'as well would pay them twice for the overlapping days.',
+  allocation_not_overdrawn:
+    'That would take more leave than this allocation has left. Someone may have approved another ' +
+    'request against it a moment ago — reload the balances and try again.',
+  // Salary rule configuration. Without these a mis-shaped rule reports only the
+  // generic "conflicts with a rule the database enforces", which tells a payroll
+  // manager nothing about which field to correct.
+  rule_code_is_identifier:
+    'A rule code must start with a letter and contain only capitals, digits and underscores — ' +
+    'for example HRA_METRO.',
+  rule_fixed_has_amount: 'A fixed-amount rule needs an amount.',
+  rule_percentage_has_rate_and_base:
+    'A percentage rule needs both a rate and a base to take the percentage of.',
+  rule_formula_has_expression: 'A formula rule needs a formula.',
+  rule_condition_has_expression: 'A conditional rule needs a condition.',
+  structure_rule_unique: 'That rule is already part of this salary structure.',
+  structure_sequence_unique:
+    'Two rules in this structure share a sequence number, and the sequence is what decides the ' +
+    'order they compute in.',
+  salary_rules_code_key: 'A salary rule with that code already exists.',
+  salary_structures_code_key: 'A salary structure with that code already exists.',
+  payruns_name_key: 'A payrun with that name already exists.',
+  contracts_reference_key: 'A contract with that reference already exists.',
+  allocation_amount_positive: 'An allocation must be for more than zero days.',
+  allocation_dates_ordered: 'An allocation cannot expire before it starts.',
+  request_amount_positive: 'A time off request must be for more than zero.',
+  timeoff_type_max_positive: 'The per-request maximum must be greater than zero.',
+  line_break_shorter_than_span:
+    'The break cannot be as long as the shift it sits inside.',
+  line_day_in_week: 'Pick a day of the week for this schedule line.',
+  employee_names_present: 'An employee needs both a first and a last name.',
+  employee_termination_matches_status:
+    'A terminated employee needs a termination date, and only a terminated employee may have one.',
+  employee_termination_after_hire: 'Termination cannot be before the hire date.',
+  employee_not_own_manager: 'An employee cannot be their own manager.',
+  payslip_proration_is_a_fraction:
+    'The computed proration for this payslip is not a fraction between 0 and 1, which means the ' +
+    'period or the contract dates are inconsistent.',
   users_email_key: 'An account with that email address already exists.',
   employees_work_email_key: 'Another employee already uses that work email address.',
   employees_employee_number_key: 'That employee number is already taken.',
@@ -60,6 +97,28 @@ const STATUS_BY_PG_CODE: Record<string, number> = {
   '23503': 409, // foreign_key_violation
   '23514': 422, // check_violation
   '23502': 422, // not_null_violation
+  // Class 22 -- data exception. These are the user's input failing to be the
+  // shape the column requires, so they belong with the 422s. Previously they
+  // fell through to the generic 500 branch, which told someone who had typed a
+  // bad time that something had gone wrong on our side.
+  '22001': 422, // string_data_right_truncation
+  '22003': 422, // numeric_value_out_of_range
+  '22007': 422, // invalid_datetime_format
+  '22008': 422, // datetime_field_overflow
+  '22P02': 422, // invalid_text_representation
+};
+
+/**
+ * A data exception carries no constraint name, so there is nothing to look up in
+ * CONSTRAINT_MESSAGES. These say what kind of value was wrong, which is as much
+ * as the code itself knows.
+ */
+const DATA_ERROR_MESSAGES: Record<string, string> = {
+  '22001': 'One of those values is longer than the field allows.',
+  '22003': 'That number is outside the range this field can store.',
+  '22007': 'That is not a valid date or time.',
+  '22008': 'That date or time is out of range.',
+  '22P02': 'One of those values is not in the format this field expects.',
 };
 
 export function errorHandler(
@@ -82,7 +141,9 @@ export function errorHandler(
 
   if (isPostgresError(error)) {
     const status = STATUS_BY_PG_CODE[error.code];
-    const friendly = error.constraint === undefined ? undefined : CONSTRAINT_MESSAGES[error.constraint];
+    const friendly =
+      (error.constraint === undefined ? undefined : CONSTRAINT_MESSAGES[error.constraint]) ??
+      DATA_ERROR_MESSAGES[error.code];
 
     if (status !== undefined && friendly !== undefined) {
       response.status(status).json({
@@ -103,7 +164,7 @@ export function errorHandler(
         error: {
           code: status === 409 ? 'conflict' : 'validation_failed',
           message: 'That change conflicts with a rule the database enforces and was not saved.',
-          details: isProduction ? undefined : { constraint: error.constraint, detail: error.detail },
+          details: exposeErrorDetails ? { constraint: error.constraint, detail: error.detail } : undefined,
         },
       });
       return;
@@ -119,7 +180,7 @@ export function errorHandler(
       error: {
         code: 'internal_error',
         message: 'Something went wrong on our side. The problem has been logged.',
-        details: isProduction ? undefined : { pg_code: error.code, message: error.message },
+        details: exposeErrorDetails ? { pg_code: error.code, message: error.message } : undefined,
       },
     });
     return;
