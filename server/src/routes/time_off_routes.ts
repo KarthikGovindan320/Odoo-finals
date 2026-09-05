@@ -15,6 +15,7 @@
  * rows. Because balance is derived rather than stored, that is the whole reversal.
  */
 import { z } from 'zod';
+import type { Request } from 'express';
 
 import { AppError, notFound, workflowViolation } from '../errors/app_error.ts';
 import { query, queryOne, withTransaction } from '../db/pool.ts';
@@ -33,6 +34,54 @@ import { consumeForRequest, releaseForRequest } from '../services/time_off/consu
 import { deriveLeaveDuration } from '../services/time_off/duration.ts';
 
 const timeOff = createGuardedRouter();
+
+/**
+ * The employee-identity search these lists share.
+ *
+ * Both are lists of one person's records among many, so "search" here means the
+ * person: their name or their employee number. Matched against the joined name
+ * rather than the two columns separately, so that somebody typing the name they
+ * are looking at -- "Sanjay Krishnan" -- finds it, which neither column does on
+ * its own. See employee_repository for the escaping: wildcards in the term are
+ * escaped, not honoured.
+ */
+function employeeSearch(term: string, params: QueryParameter[]): string {
+  params.push(`%${term.replace(/([\\%_])/g, '\\$1')}%`);
+  return `((e.first_name || ' ' || e.last_name) ILIKE $${params.length}
+        OR e.employee_number ILIKE $${params.length})`;
+}
+
+/**
+ * The WHERE the request list and the request export share.
+ *
+ * Extracted rather than left as two copies: the list built one and the export
+ * built the same one again by hand, so a filter added to the screen reached the
+ * file only if somebody remembered to add it twice. An export that filters even
+ * slightly differently from the screen it was launched from is a file that
+ * disagrees with what the person saw, and they will not find out from the file.
+ */
+function requestFilter(
+  request: Request,
+  filters: { employee_id?: number; state?: string; q?: string },
+): { where: string; params: QueryParameter[] } {
+  const conditions: string[] = ['true'];
+  const params: QueryParameter[] = [];
+
+  const restrictTo = scopedEmployeeId(request) ?? filters.employee_id;
+  if (restrictTo != null) {
+    params.push(restrictTo);
+    conditions.push(`r.employee_id = $${params.length}`);
+  }
+  if (filters.state) {
+    params.push(filters.state);
+    conditions.push(`r.state = $${params.length}`);
+  }
+  if (filters.q) {
+    conditions.push(employeeSearch(filters.q, params));
+  }
+
+  return { where: conditions.join(' AND '), params };
+}
 
 /* ---------------------------------------------------------------- types --- */
 
@@ -85,18 +134,27 @@ timeOff.get('/allocations', 'timeoff:read', async (request, response) => {
   );
 
   const restrictTo = scopedEmployeeId(request) ?? filters.employee_id;
+  const conditions: string[] = ['true'];
   const params: QueryParameter[] = [];
-  let where = 'true';
   if (restrictTo != null) {
     params.push(restrictTo);
-    where = `a.employee_id = $${params.length}`;
+    conditions.push(`a.employee_id = $${params.length}`);
   }
+  if (filters.q) {
+    conditions.push(employeeSearch(filters.q, params));
+  }
+  const where = conditions.join(' AND ');
 
   // The total is returned like every other list endpoint. Without it the client
   // was left inventing the page count from the length of the page it had, so a
   // screen showing 25 of 500 allocations reported "25 records".
+  // Joined to employees because the search matches on them; an inner join on a
+  // NOT NULL column, so the count is unchanged when nothing is searched for.
   const totalRow = await queryOne<{ total: number }>(
-    `SELECT count(*)::int AS total FROM time_off_allocations a WHERE ${where}`,
+    `SELECT count(*)::int AS total
+       FROM time_off_allocations a
+       JOIN employees e ON e.id = a.employee_id
+      WHERE ${where}`,
     params,
   );
 
@@ -207,22 +265,12 @@ timeOff.get('/requests', 'timeoff:read', async (request, response) => {
     request.query,
   );
 
-  const conditions: string[] = ['true'];
-  const params: QueryParameter[] = [];
-
-  const restrictTo = scopedEmployeeId(request) ?? filters.employee_id;
-  if (restrictTo != null) {
-    params.push(restrictTo);
-    conditions.push(`r.employee_id = $${params.length}`);
-  }
-  if (filters.state) {
-    params.push(filters.state);
-    conditions.push(`r.state = $${params.length}`);
-  }
-
-  const where = conditions.join(' AND ');
+  const { where, params } = requestFilter(request, filters);
   const totalRow = await queryOne<{ total: number }>(
-    `SELECT count(*)::int AS total FROM time_off_requests r WHERE ${where}`,
+    `SELECT count(*)::int AS total
+       FROM time_off_requests r
+       JOIN employees e ON e.id = r.employee_id
+      WHERE ${where}`,
     params,
   );
 
@@ -257,26 +305,19 @@ timeOff.get('/requests/export', 'timeoff:read', async (request, response) => {
     z.object({
       employee_id: identifier.optional(),
       state: z.enum(['draft', 'to_approve', 'approved', 'refused', 'cancelled']).optional(),
+      q: z.string().trim().max(120).optional(),
       format: exportFormat,
     }),
     request.query,
   );
 
-  const conditions: string[] = ['true'];
-  const params: QueryParameter[] = [];
-  const restrictTo = scopedEmployeeId(request) ?? filters.employee_id;
-  if (restrictTo != null) {
-    params.push(restrictTo);
-    conditions.push(`r.employee_id = $${params.length}`);
-  }
-  if (filters.state) {
-    params.push(filters.state);
-    conditions.push(`r.state = $${params.length}`);
-  }
-  const where = conditions.join(' AND ');
+  const { where, params } = requestFilter(request, filters);
 
   const totalRow = await queryOne<{ total: number }>(
-    `SELECT count(*)::int AS total FROM time_off_requests r WHERE ${where}`,
+    `SELECT count(*)::int AS total
+       FROM time_off_requests r
+       JOIN employees e ON e.id = r.employee_id
+      WHERE ${where}`,
     params,
   );
   assertExportable(totalRow?.total ?? 0);

@@ -107,6 +107,7 @@ function RequestsTab({
   canApprove: boolean;
   canCreate: boolean;
 }) {
+  const [search, setSearch] = useState('');
   const [state, setState] = useState('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
@@ -115,7 +116,7 @@ function RequestsTab({
   const [deciding, setDeciding] = useState<{ row: RequestRow; action: 'approve' | 'refuse' } | null>(null);
 
   const path = `/time-off/requests${queryString({
-    employee_id: employeeFilter, state, page, page_size: 25,
+    employee_id: employeeFilter, q: search, state, page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<RequestRow>>(path);
 
@@ -203,6 +204,9 @@ function RequestsTab({
 
       <Panel flush>
         <Toolbar
+          search={search}
+          onSearchChange={(value) => { setPage(1); setSearch(value); }}
+          searchPlaceholder="Search employee name or number…"
           right={
             <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span className="toolbar__count">{data?.total ?? 0} requests</span>
@@ -414,13 +418,14 @@ function AllocationsTab({
   employeeFilter: string;
   canManage: boolean;
 }) {
+  const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const path = `/time-off/allocations${queryString({
-    employee_id: employeeFilter, page, page_size: 25,
+    employee_id: employeeFilter, q: search, page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<AllocationRow>>(path);
 
@@ -471,12 +476,18 @@ function AllocationsTab({
 
       <Panel flush>
         <Toolbar
+          search={search}
+          onSearchChange={(value) => { setPage(1); setSearch(value); }}
+          searchPlaceholder="Search employee name or number…"
           right={
-            canManage ? (
-              <button className="btn btn--primary btn--sm" onClick={() => setCreating(true)}>
-                New allocation
-              </button>
-            ) : undefined
+            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span className="toolbar__count">{data?.total ?? 0} allocations</span>
+              {canManage && (
+                <button className="btn btn--primary btn--sm" onClick={() => setCreating(true)}>
+                  New allocation
+                </button>
+              )}
+            </span>
           }
         />
         <DataTable columns={columns} rows={data?.rows ?? []} rowKey={(row) => row.id}

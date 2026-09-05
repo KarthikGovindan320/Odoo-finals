@@ -90,7 +90,7 @@ const attendance = createGuardedRouter();
  */
 function attendanceFilter(
   request: Request,
-  filters: { employee_id?: number; status?: string; from?: string; to?: string },
+  filters: { employee_id?: number; status?: string; from?: string; to?: string; q?: string },
 ): { where: string; params: QueryParameter[] } {
   const conditions: string[] = ['true'];
   const params: QueryParameter[] = [];
@@ -99,6 +99,17 @@ function attendanceFilter(
   if (restrictTo != null) {
     params.push(restrictTo);
     conditions.push(`a.employee_id = $${params.length}`);
+  }
+  if (filters.q) {
+    // See employee_repository: wildcards in the term are escaped, not honoured.
+    // Matched against the joined name rather than the two columns separately, so
+    // that a person typing the name they are looking at -- "Sanjay Krishnan" --
+    // finds it, which neither column does on its own.
+    params.push(`%${filters.q.replace(/([\\%_])/g, '\\$1')}%`);
+    conditions.push(
+      `((e.first_name || ' ' || e.last_name) ILIKE $${params.length}
+        OR e.employee_number ILIKE $${params.length})`,
+    );
   }
   if (filters.status) {
     params.push(filters.status);
@@ -124,7 +135,10 @@ attendance.get('/', 'attendance:read', async (request, response) => {
   const filters = parseOrThrow(listQuery, request.query);
   const { where, params } = attendanceFilter(request, filters);
   const totalRow = await queryOne<{ total: number }>(
-    `SELECT count(*)::int AS total FROM attendance_records a WHERE ${where}`,
+    `SELECT count(*)::int AS total
+       FROM attendance_records a
+       JOIN employees e ON e.id = a.employee_id
+      WHERE ${where}`,
     params,
   );
 
@@ -165,7 +179,10 @@ attendance.get('/export', 'attendance:read', async (request, response) => {
   const { where, params } = attendanceFilter(request, filters);
 
   const totalRow = await queryOne<{ total: number }>(
-    `SELECT count(*)::int AS total FROM attendance_records a WHERE ${where}`,
+    `SELECT count(*)::int AS total
+       FROM attendance_records a
+       JOIN employees e ON e.id = a.employee_id
+      WHERE ${where}`,
     params,
   );
   assertExportable(totalRow?.total ?? 0);

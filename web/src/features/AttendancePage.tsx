@@ -36,6 +36,7 @@ export function AttendancePage() {
   const { can, user, scopeOf } = useAuth();
   const employeeFilter = params.get('employee_id') ?? '';
 
+  const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
@@ -59,7 +60,7 @@ export function AttendancePage() {
   };
 
   const path = `/attendance${queryString({
-    employee_id: employeeFilter, status, from, to, page, page_size: 25,
+    employee_id: employeeFilter, q: search, status, from, to, page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<AttendanceRow>>(path);
 
@@ -187,13 +188,16 @@ export function AttendancePage() {
 
       <Panel flush>
         <Toolbar
+          search={search}
+          onSearchChange={(value) => { setPage(1); setSearch(value); }}
+          searchPlaceholder="Search employee name or number…"
           right={
             <>
               <span className="toolbar__count">{data?.total ?? 0} records</span>
               <ExportButtons
                 path="/attendance/export"
                 name="attendance"
-                query={{ employee_id: employeeFilter, status, from, to }}
+                query={{ employee_id: employeeFilter, q: search, status, from, to }}
               />
             </>
           }
