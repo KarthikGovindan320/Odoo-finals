@@ -1,0 +1,10 @@
+node_modules/
+.env
+dist/
+build/
+*.log
+.DS_Store
+coverage/
+
+# Local strategy notes and the problem-statement PDF — reference only, not part of the deliverable.
+context/
