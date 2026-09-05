@@ -1,12 +1,9 @@
-# PeoplePay360 — HR & Payroll API
+# PeoplePay360 — HR & Payroll
 
-The backend of an integrated HR and payroll platform: employee master data,
-contracts, working schedules, attendance, time off, a salary rules engine,
-payruns, payslip PDFs and bulk email delivery, over a PostgreSQL schema that
-enforces the domain's temporal rules itself.
-
-This repository is the API, the schema and the payroll engine. The web client
-lives separately.
+An integrated HR and payroll platform: employee master data, contracts, working
+schedules, attendance, time off, a salary rules engine, payruns, payslip PDFs,
+bulk email delivery and a dashboard — over a PostgreSQL schema that enforces the
+domain's temporal rules itself.
 
 ---
 
@@ -153,9 +150,13 @@ saying why; an HR Manager sees every employee and has no payroll reach at all.
 | Formulas | **A purpose-built lexer, Pratt parser and evaluator** | See above. ~250 lines, 34 tests. |
 | PDF | **PDFKit** | Pure JS, no headless browser. Generating sixty payslips for a bulk send is the same code path as printing one. |
 | Email | **Nodemailer → Mailpit** | Real SMTP, real MIME, real attachments, and no third-party mail provider. Works with the network unplugged. |
+| Client | **React 19 + Vite + React Router** | Standard and fast. No state library — this application's server state is shallow, and forty lines of fetching hook beats a cache whose semantics would need defending. |
+| Styling | **CSS against design tokens, with our own primitives** | No component library. Seven primitives — table, toolbar, field, status bar, smart button, panel, badge — make every list and form behave identically across all six modules. |
+| Charts | **SVG drawn directly** | Two chart shapes are all the dashboard needs; it keeps the palette identical to the rest of the interface and removes a dependency. |
 | Tests | **`node:test`** | Built into the runtime. No test framework, no configuration. |
 
-Five production dependencies: `express`, `pg`, `zod`, `pdfkit`, `nodemailer`.
+Nine production dependencies: `express`, `pg`, `zod`, `pdfkit`, `nodemailer`,
+`react`, `react-dom`, `react-router`, `vite`.
 
 ---
 
@@ -251,8 +252,12 @@ docker compose up -d mailpit  # optional: SMTP sink at http://localhost:8025
 npm run db:migrate
 npm run db:seed
 
-npm run dev                   # API → http://localhost:4000
+npm run dev:server            # API → http://localhost:4000
+npm run dev:web               # UI  → http://localhost:5173
 ```
+
+The dev server proxies `/api` to the backend, so the session cookie stays
+first-party and no CORS negotiation is needed in development.
 
 ### Seeded data
 
@@ -346,12 +351,30 @@ server/src/
   middleware/     authenticate · authorize · validate · error_handler
   pdf/ · mail/ · errors/ · lib/
   test/
+web/src/
+  app/            router, shell, breadcrumb
+  components/     the shared primitives
+  features/       one page per module
+  lib/            api client, auth context, formatters
+  styles/         tokens.css, base.css
 scripts/          verify_demo_flows.mjs
 ```
 
 Three layers, stated so they stay honest: **routes** know HTTP and nothing else;
 **services** know business rules and nothing about HTTP; **repositories** know SQL
 and nothing about business rules.
+
+### Interface
+
+The design is drawn from the artifact the product exists to produce. A payslip is
+an accounting document, so colour is semantic rather than decorative: earnings run
+petrol-blue and ochre, a subtotal is structural so it takes slate, deductions are
+brick, and net pay is the only green on the page. An accountant reads the column
+before the number, and the colour is that column.
+
+Navigation is filtered by permission so a role never sees a menu that would 403 —
+an HR Manager, who has no payroll access, has no Payroll menu. That is
+presentation only; the server re-checks every route independently.
 
 ---
 

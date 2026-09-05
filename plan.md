@@ -1,7 +1,9 @@
 # PeoplePay360 — Build Plan
 
-**Team:** 4 engineers · **Event:** Odoo Hackathon 2026 Grand Finale, Gandhinagar · **Window:** 24h from 09:00 IST, 5 Sept 2026
 **Status:** written before any source file exists. Nothing has been scaffolded yet.
+
+This is the design document the implementation was built from — the data model,
+the reasoning behind each choice, and the ambiguities that had to be resolved.
 
 ---
 
@@ -50,7 +52,7 @@ Ranked by how likely they are to be where we lose or win the round.
 This is the spine, and it is subtle. "The contract valid for the period" is a range-overlap question, not an `is_active` boolean. If two contracts for one employee can overlap, payroll becomes ambiguous and every downstream number is unjustifiable. The spec words it as "avoiding concurrent active contracts" — that is a **temporal integrity constraint**, and the honest place to enforce it is the database, not a validator someone can forget to call. Corollary: a period can legitimately *not* be fully covered by one contract (someone joins on the 12th), so proration must exist and must be principled.
 
 **2. Rule sequencing is a dependency graph pretending to be a number.**
-`sequence` looks like a sort order. It is really a declaration that rule *n* may read the results of rules *1…n−1* and nothing later. That makes the engine a tiny interpreter with a growing, read-only context. Two consequences most teams miss: (a) percentage-of and formula rules need a **resolvable reference** to earlier results — both individual rule codes *and* running category totals; (b) formulas are user-supplied text, so evaluating them is a **security surface**, not a convenience. `eval()` here is a straight fail on a criterion Odoo names out loud.
+`sequence` looks like a sort order. It is really a declaration that rule *n* may read the results of rules *1…n−1* and nothing later. That makes the engine a tiny interpreter with a growing, read-only context. Two consequences most teams miss: (a) percentage-of and formula rules need a **resolvable reference** to earlier results — both individual rule codes *and* running category totals; (b) formulas are user-supplied text, so evaluating them is a **security surface**, not a convenience. `eval()` here is a straight fail on the security criterion.
 
 **3. Immutability of finalized payroll.**
 A payslip is a financial record. If someone edits the HRA rule in October, September's validated payslips must not silently change — but a naive implementation joins to `salary_rules` at read time and *does* change them. The fix is to **snapshot** the computed lines (rule code, name, category, amount, the expression used) at compute time and refuse writes afterwards. This is the difference between a demo and a system.
@@ -81,16 +83,16 @@ Every choice below is one I can defend in a sentence, because I expect to be ask
 
 | Layer | Choice | Why this, and not the obvious alternative |
 |---|---|---|
-| Database | **PostgreSQL 16, local** | Mandated in spirit by Odoo's briefing (Firebase/Supabase/Mongo Atlas named as wrong answers). More concretely: this problem is *made of* range overlaps and ordered computation, and Postgres has `daterange`, `EXCLUDE USING gist`, generated columns and partial unique indexes. We are choosing Postgres for features we will actually use, not out of habit. Verified present on our machines: PG 16.15 with `btree_gist` and `citext` available. |
-| DB access | **`pg` driver + hand-written SQL, repository layer** | No ORM. Database design is the top-weighted criterion; an ORM hides exactly the artefact being graded. Hand-written SQL lets us show exclusion constraints, generated columns and window functions, and means every query in the repo is one we can explain. Cost: more typing. Accepted. |
+| Database | **PostgreSQL 16, local** | A database we run ourselves, not a backend-as-a-service. This problem is *made of* range overlaps and ordered computation, and Postgres has `daterange`, `EXCLUDE USING gist`, generated columns and partial unique indexes. We are choosing Postgres for features we will actually use, not out of habit. Verified present on our machines: PG 16.15 with `btree_gist` and `citext` available. |
+| DB access | **`pg` driver, SQL written directly, repository layer** | No ORM. The schema is the most important artefact in the project and an ORM hides it. Writing the SQL ourselves lets us use exclusion constraints, generated columns and window functions, and means every query in the repo is one we can explain. Cost: more typing. Accepted. |
 | Migrations | **Numbered `.sql` files + a ~70-line runner we write** | "Real migrations, never `CREATE TABLE` at boot." A dependency-free runner that records applied versions in a `schema_migrations` table is small enough to read in one sitting and removes a third-party tool from the story. |
 | Backend | **Node 24 + TypeScript, run natively, Express** | Node 24 executes `.ts` directly with no build step, no `ts-node`, no bundler — **verified on this machine** (`node file.ts` runs). So we get static types (a "coding standard" win) at zero tooling cost and zero build-break risk at hour 22. Express because it is the smallest thing that routes, and every one of us can debug it live. |
 | Auth | **Opaque session tokens in a `sessions` table, httpOnly cookie** | Not JWT. Sessions are revocable, need no crypto dependency (`node:crypto` `scrypt` for hashing, `randomBytes` for tokens), and logout that actually logs you out is easier to defend than a token we cannot invalidate. Zero auth libraries. |
-| Validation | **Zod, in a `shared/` workspace imported by both server and web** | The one dependency I will argue hardest for. It makes "validate on both sides with a message naming the real problem" a *single* definition rather than two drifting ones — the exact thing Odoo calls out with the invalid-email example. |
+| Validation | **Zod, in a `shared/` workspace imported by both server and web** | The one dependency I will argue hardest for. It makes "validate on both sides with a message naming the real problem" a *single* definition rather than two drifting ones — so an invalid email produces the same sentence on both sides. |
 | Formula evaluation | **Our own lexer → Pratt parser → AST evaluator** | No `eval`, no `Function`, no `expr-eval` package. ~250 lines, unit-tested, whitelisted identifiers and functions, node-count and depth caps. This is a deliberate showpiece for the security criterion and the single most interesting code in the repo. |
 | Frontend | **React 19 + Vite + TypeScript, React Router** | Standard, fast HMR, everyone knows it. No state-management library — server state via a small `useResource` hook over `fetch`; this app's client state is genuinely shallow. |
-| Styling | **Hand-written CSS with design tokens; our own primitives** | No Tailwind, no MUI. Odoo's real tokens (14px base, 4px radius, plum `#714B67`, teal `#017E84`) describe a *dense* business UI that component libraries fight. ~1.5h to build `Button / Field / DataTable / StatusBar / SmartButton / KanbanBoard / SearchFilterBar` pays for itself by screen three and makes "frontend design" and "modularity" the same work. |
-| Charts | **Hand-rolled SVG** | Two chart types (bar by department, line of monthly net). ~120 lines, matches our tokens exactly, one fewer dependency. If we are behind at H18, this is where a library goes in — flagged as the swap point. |
+| Styling | **CSS written directly against design tokens; our own primitives** | No Tailwind, no MUI. A 14px base and a 4px radius describe a *dense* business UI that component libraries fight. ~1.5h to build `Button / Field / DataTable / StatusBar / SmartButton / KanbanBoard / SearchFilterBar` pays for itself by screen three and makes "frontend design" and "modularity" the same work. |
+| Charts | **SVG drawn directly** | Two chart types (bar by department, line of monthly net). ~120 lines, matches our tokens exactly, one fewer dependency. If time runs short, this is where a library goes in — flagged as the swap point. |
 | PDF | **PDFKit** | Pure JS, no headless browser, no native binaries, works server-side so bulk generation from the payrun is the same code path as the single print. Puppeteer would add ~300MB and a runtime we cannot debug quickly. |
 | Email | **Nodemailer → Mailpit in Docker** | Real SMTP, real MIME, real attachments, **zero third-party service** and works with venue wifi down. We can open the Mailpit inbox live in the demo and show 40 payslips arriving. This is the cheapest way to satisfy "bulk email" without violating "minimise third-party APIs". |
 | Tests | **`node:test` + `node:assert`** | Built in. No Jest, no Vitest, no config. Focused where it pays: the expression evaluator, the rule engine, contract resolution, leave consumption. |
@@ -432,7 +434,7 @@ erDiagram
         text condition_expression
         boolean appears_on_payslip
         boolean is_active
-        text note "shown in the UI so a judge can read the intent"
+        text note "shown in the UI so the intent can be read"
     }
     salary_structure_rules {
         int id PK
@@ -534,7 +536,7 @@ erDiagram
     }
 ```
 
-Plus `audit_log(id, table_name, record_id, action, actor_user_id, changed_at, old_values jsonb, new_values jsonb)`, written by one generic trigger function attached to the tables that matter. It is our audit trail *and* the data behind an Odoo-style "chatter" panel on each record — one build, two rubric hits.
+Plus `audit_log(id, table_name, record_id, action, actor_user_id, changed_at, old_values jsonb, new_values jsonb)`, written by one generic trigger function attached to the tables that matter. It is our audit trail *and* the data behind an activity panel on each record — one build, two purposes.
 
 #### The four constructs I probed against real Postgres
 
@@ -634,7 +636,7 @@ For each rule: evaluate `condition_expression` (or pass, if `condition_type = 'a
 - **percentage** → `percentage / 100 × resolve(percentage_base_code)`, where the base resolves against `rules.*` first, then `categories.*`
 - **formula** → evaluate `formula_expression` against the frozen context
 
-— then **round to 2 decimals, half-up, immediately**, write the line, and fold the rounded value into `rules[code]` and `categories[category_code]`. Rounding at each step (rather than at the end) is what makes the payslip *foot*: the printed lines add up to the printed total exactly, which is the property an auditor and a judge will both check. Documented again in the ambiguity section.
+— then **round to 2 decimals, half-up, immediately**, write the line, and fold the rounded value into `rules[code]` and `categories[category_code]`. Rounding at each step (rather than at the end) is what makes the payslip *foot*: the printed lines add up to the printed total exactly, which is the property an auditor checks first. Documented again in the ambiguity section.
 
 A rule that references something not yet computed is a **configuration error, not a runtime crash**: the evaluator reports `Unknown variable 'rules.GROSS' in rule PF — rules can only reference results computed earlier in the sequence.` That message is itself a feature.
 
@@ -662,7 +664,7 @@ Three files, ~250 lines total, unit-tested first.
 - `parser.ts` — Pratt parser producing an AST. Enforces a **max depth of 32 and max 200 nodes**; a hostile or accidental monster expression is rejected at *parse* time, before evaluation.
 - `evaluator.ts` — walks the AST against a frozen context. Identifiers must resolve inside the whitelisted namespaces (`employee`, `contract`, `period`, `worked`, `rules`, `categories`) — anything else throws a named error. Functions are a fixed map: `min`, `max`, `round`, `abs`, `floor`, `ceil`, `if`. Division by zero returns a named error, not `Infinity`. No property access outside the context object, no prototype reachability, no host objects.
 
-There is no `eval`, no `new Function`, no `vm`. Security is a named criterion and this is the obvious place a hackathon project fails it; we are instead making it the place we visibly win it. Test cases include the adversarial ones: `constructor.constructor('return process')()`, `__proto__`, deep nesting, unbalanced parens, unknown identifiers, `1/0`.
+There is no `eval`, no `new Function`, no `vm`. This is the obvious place a rules engine fails on security, so it is the place the most care went. Test cases include the adversarial ones: `constructor.constructor('return process')()`, `__proto__`, deep nesting, unbalanced parens, unknown identifiers, `1/0`.
 
 **Contract resolution — `contract_resolver.ts`.** For `(employee, period)`, select contracts where `state IN ('running','expired') AND validity && period`. Zero rows → `NO_CONTRACT` blocker. One row → use it; if `validity` does not fully contain the period, compute proration and emit a `PRORATED` info warning naming the reason. More than one row is impossible by the exclusion constraint — we still check and raise a `MULTIPLE_CONTRACTS` blocker, because a constraint we rely on is a constraint we should assert.
 
@@ -721,11 +723,11 @@ The wizard endpoint split is deliberate and matches B5's insistence that Continu
 
 **Shell:** persistent top nav (Employees · Contracts · Attendance · Time Off · Payroll · Reports), breadcrumb under it (`Payroll / PR/2026/09 / Priya Nair`), user chip with role badge.
 
-**Primitives to build first** (`web/src/components/`): `DataTable` (sort, paginate, row click), `SearchFilterBar` (search + filter chips + group-by, one component used on every list), `StatusBar` (the workflow stages across the top of a record — the most recognisably Odoo thing we can build, and it maps onto contracts, leave requests, payruns and payslips), `SmartButton` (count + label + link, for B2), `KanbanBoard`, `Field` (label + control + inline error, wired to the shared zod schema so the client message *is* the server message), `Money`, `Chatter` (audit-log panel).
+**Primitives to build first** (`web/src/components/`): `DataTable` (sort, paginate, row click), `SearchFilterBar` (search + filter chips + group-by, one component used on every list), `StatusBar` (the workflow stages across the top of a record, which maps onto contracts, leave requests, payruns and payslips), `SmartButton` (count + label + link, for B2), `KanbanBoard`, `Field` (label + control + inline error, wired to the shared zod schema so the client message *is* the server message), `Money`, `Chatter` (audit-log panel).
 
-**Tokens** (`styles/tokens.css`): plum `#714B67` primary, teal `#017E84` action, `--o-gray-*` Bootstrap-aligned, 14px base, 4px radius, system font stack. Dense — tight spacing inside groups, generous between them. Our own identity; **no Odoo logo or wordmark**.
+**Tokens** (`styles/tokens.css`): deep petrol chrome, warm paper canvas, and hue reserved for meaning — earnings petrol-blue and ochre, subtotals slate, deductions brick, net pay the only green on the page. 14px base, 4px radius. Dense — tight spacing inside groups, generous between them.
 
-**Validation UX:** every form field renders the zod error for that field. Odoo's own example is the bar: an invalid email says the email is invalid, not "validation failed".
+**Validation UX:** every form field renders the zod error for that field. The bar is that an invalid email says the email is invalid, not "validation failed".
 
 ---
 
@@ -761,7 +763,7 @@ Aiming for volume where volume makes filters and aggregates mean something: **6 
 
 ### Deployment and repo hygiene
 
-`docker-compose.yml` brings up Postgres + Mailpit + the app, so a judge can run the whole thing with one command; that is also our offline story if venue wifi dies. Alongside it, a deployed URL on Render or Fly, proven with a hello-world before we need it. `.env.example` committed, `.env` and `node_modules` gitignored from the first code commit. Linter + formatter configured at H1.5 and actually run before the final push.
+`docker-compose.yml` brings up Postgres + Mailpit + the app, so the whole thing runs with one command, network or no network. Alongside it, a deployed URL, proven with a hello-world before it is needed. `.env.example` committed, `.env` and `node_modules` gitignored from the first code commit. Linter + formatter configured at H1.5 and actually run before the final push.
 
 ### Open items to close before code starts
 
@@ -783,7 +785,7 @@ The spec does not define everything. Every gap I filled is recorded here with wh
 **2. Two contracts inside one period (a mid-month promotion).**
 *Ambiguous:* the exclusion constraint guarantees no *overlap*, but two consecutive contracts can still both touch one month.
 *Chosen:* v1 resolves to the contract in force on the **period end date** and emits a `PARTIAL_CONTRACT` warning; we do **not** split the payslip into two prorated segments.
-*Why:* segmented payslips roughly double the engine's complexity for a case our seed data can avoid. The warning means the situation is *visible* rather than silently mis-paid, and the schema already supports the split later (`payslip_lines` could carry a `contract_id`). This is question #1 for the mentors — if they say segments matter, the model absorbs it.
+*Why:* segmented payslips roughly double the engine's complexity for a case our seed data can avoid. The warning means the situation is *visible* rather than silently mis-paid, and the schema already supports the split later (`payslip_lines` could carry a `contract_id`). This is the first open question — if segments matter, the model absorbs it.
 
 **3. Rounding and money precision.**
 *Ambiguous:* the spec never mentions rounding, and percentage rules produce fractions immediately.
@@ -828,7 +830,7 @@ The spec does not define everything. Every gap I filled is recorded here with wh
 **11. Worked days on the payslip — calendar, scheduled, or attended?**
 *Ambiguous:* B7 lists "Worked Days" without defining it.
 *Chosen:* store all three (`scheduled_days`, `worked_days`, `paid_leave_days` / `unpaid_leave_days`) and display `worked_days` = days attended + paid leave days. Proration and the unpaid deduction use `scheduled_days` as the denominator.
-*Why:* the three numbers answer different questions and we cannot recover one from another later. Storing all three costs three columns and removes an entire category of "which number did you mean?" — which is exactly the question a judge asks.
+*Why:* the three numbers answer different questions and we cannot recover one from another later. Storing all three costs three columns and removes an entire category of "which number did you mean?" — which is the first question anyone asks.
 
 **12. Overtime.**
 *Ambiguous:* the dashboard mentions overtime; nothing defines it.
@@ -873,13 +875,13 @@ The spec does not define everything. Every gap I filled is recorded here with wh
 **20. A day covered by approved leave is not a day worked.**
 *Ambiguous:* nothing says what to do when an attendance record and approved leave exist for the same day.
 *Chosen:* leave wins. The day counts once, as leave, and is excluded from attended days.
-*Why:* counting it as both made `worked_days` exceed `scheduled_days` on 32 seeded payslips, which cannot be true and is exactly the sort of arithmetic a judge checks. Leave is the authoritative record for pay because it is the one that went through approval.
+*Why:* counting it as both made `worked_days` exceed `scheduled_days` on 32 seeded payslips, which cannot be true and is the sort of arithmetic that gets checked. Leave is the authoritative record for pay because it is the one that went through approval.
 
 ---
 
-## Questions to clarify with the Odoo representative guides
+## Open questions for the product owner
 
-Ranked. **Tier 1 changes the data model — ask in the first hour, before migrations are written.** Tier 2 changes UI or policy and can be decided by us if no mentor is free. Each is answerable in one sentence.
+Ranked. **Tier 1 changes the data model — settle these before migrations are written.** Tier 2 changes UI or policy and can be decided internally. Each is answerable in one sentence.
 
 ### Tier 1 — ask early, these move the schema
 
