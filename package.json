@@ -14,7 +14,7 @@
     "db:reset": "node db/migrate.ts --reset && node db/seed.ts",
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
-    "test": "node --test server/test/",
+    "test": "node --test \"server/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "engines": {
