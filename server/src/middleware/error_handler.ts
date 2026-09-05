@@ -15,11 +15,13 @@ import { isProduction } from '../config/env.ts';
 type PostgresError = { code: string; constraint?: string; detail?: string };
 
 function isPostgresError(error: unknown): error is Error & PostgresError {
-  return (
-    error instanceof Error &&
-    typeof (error as Partial<PostgresError>).code === 'string' &&
-    /^[0-9A-Z]{5}$/.test((error as PostgresError).code)
-  );
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  // pg attaches its own fields to a plain Error, so the narrowing goes through
+  // unknown -- Error and PostgresError do not overlap structurally.
+  const candidate = error as unknown as Partial<PostgresError>;
+  return typeof candidate.code === 'string' && /^[0-9A-Z]{5}$/.test(candidate.code);
 }
 
 /** Constraint name -> the sentence a user should actually see. */

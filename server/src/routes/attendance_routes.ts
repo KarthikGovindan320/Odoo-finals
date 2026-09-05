@@ -149,7 +149,7 @@ attendance.patch('/:id', 'attendance:correct', validateBody(attendanceInput), as
               status = CASE WHEN $3::timestamptz IS NULL THEN 'missing_checkout' ELSE status END,
               is_manually_edited = true, edited_by_user_id = $4, edited_at = now(), edit_reason = $5
         WHERE id = $1`,
-      [id, input.check_in, input.check_out ?? null, request.auth?.userId ?? null, input.edit_reason],
+      [id, input.check_in, input.check_out ?? null, request.auth?.userId ?? null, input.edit_reason ?? null],
     );
   }, request.auth?.userId);
 
