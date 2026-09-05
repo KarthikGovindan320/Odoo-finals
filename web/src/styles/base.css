@@ -65,11 +65,13 @@ a:hover { text-decoration: underline; }
   padding-right: var(--space-2);
 }
 .topnav__mark {
-  width: 26px; height: 26px; border-radius: var(--radius-sm);
-  background: linear-gradient(140deg, var(--accent) 0%, var(--petrol) 100%);
-  display: grid; place-items: center; flex: 0 0 auto;
-  font-family: var(--font-mono); font-size: var(--size-micro); font-weight: 600;
-  letter-spacing: 0;
+  width: 26px; height: 26px; flex: 0 0 auto;
+  /* The artwork is a rounded tile drawn on a square field, so the corners are
+     clipped to its own curve rather than left as dark squares -- which is what
+     they would look like against the light login card. */
+  border-radius: 22%;
+  object-fit: cover;
+  display: block;
 }
 
 .topnav__links { display: flex; align-items: stretch; flex: 1; }
@@ -818,13 +820,14 @@ a:hover { text-decoration: underline; }
 }
 
 .splash__mark {
-  display: grid; place-items: center;
-  width: 44px; height: 44px;
-  border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  font-family: var(--font-mono); font-size: 15px; font-weight: 600;
-  letter-spacing: 0.02em;
+  width: 72px; height: 72px;
+  border-radius: 22%;
+  object-fit: cover;
+  display: block;
+  /* A hairline so the tile has an edge against the gradient rather than
+     dissolving into it. White, not gold -- gold was tried on this screen and
+     fought it. */
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14), 0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
 .splash__name {

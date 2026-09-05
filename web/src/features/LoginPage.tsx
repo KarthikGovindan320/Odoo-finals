@@ -75,7 +75,7 @@ export function LoginPage() {
     <div className="login">
       <div className="login__card">
         <div className="login__brand">
-          <span className="topnav__mark" aria-hidden="true">PP</span>
+          <img className="topnav__mark" src="/logo-64.png" alt="" />
           <span>
             <h1 style={{ fontSize: 18, margin: 0 }}>PeoplePay360</h1>
           </span>

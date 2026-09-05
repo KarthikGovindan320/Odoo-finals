@@ -132,7 +132,7 @@ export function App() {
       <a className="skip-link" href="#main">Skip to content</a>
       <nav className="topnav">
         <span className="topnav__brand">
-          <span className="topnav__mark">PP</span>
+          <img className="topnav__mark" src="/logo-64.png" alt="" />
           PeoplePay360
         </span>
 

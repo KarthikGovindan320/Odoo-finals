@@ -79,7 +79,7 @@ export function SplashScreen({ onContinue }: Props) {
       aria-label="Continue to sign in"
     >
       <div className="splash__content">
-        <span className="splash__mark" aria-hidden="true">PP</span>
+        <img className="splash__mark" src="/logo-180.png" alt="" />
         <h1 className="splash__name">PeoplePay360</h1>
         <p className="splash__quote">
           Payroll Made Simple
