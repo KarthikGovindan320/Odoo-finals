@@ -7,11 +7,11 @@
  * leaves. Whether it should appear at all is the caller's business -- see
  * lib/splash.ts.
  *
- * Any key dismisses it, which is what was asked for. A click or tap does too:
- * "press any key" is not an instruction a phone can follow, and a screen that
- * only a keyboard can get past is a screen some people cannot get past. The
- * hint names the keyboard, because that is the gesture most people will reach
- * for on the device this is usually shown on.
+ * Any key dismisses it, and so does a click or tap: "press any key" is not an
+ * instruction a phone can follow, and a screen only a keyboard can get past is
+ * a screen some people cannot get past. Nothing on screen says so -- the screen
+ * is deliberately bare -- so the container carries the instruction as its
+ * accessible name for anyone who cannot see that it is the whole viewport.
  */
 import { useEffect, useRef, useState } from 'react';
 
@@ -84,7 +84,6 @@ export function SplashScreen({ onContinue }: Props) {
         <p className="splash__quote">
           Pay is not stored. It is derived.
         </p>
-        <p className="splash__hint" aria-hidden="true">Press any key to continue</p>
       </div>
     </div>
   );
