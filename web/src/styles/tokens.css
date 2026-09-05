@@ -1,0 +1,129 @@
+/*
+ * Design tokens — "Greenbar"
+ *
+ * Named for the fanfold accounting paper payroll was printed on for forty years:
+ * warm off-white stock, ruled in bands, read under instrument-panel lighting.
+ * That is the material world this product belongs to, so the palette is drawn
+ * from it rather than from software fashion.
+ *
+ *   Chrome is deep petrol — the colour of enterprise terminals and control
+ *   panels. Dark, slightly green, authoritative without being corporate navy.
+ *
+ *   Canvas is warm paper, not cold grey. It is the single change that makes
+ *   dense tables feel like a document rather than a spreadsheet.
+ *
+ *   Hue is reserved for meaning. Earnings run petrol-blue and ochre, a subtotal
+ *   is structural so it takes slate, what is taken away is brick, and the number
+ *   the employee actually receives is the only green on the page. An accountant
+ *   reads the column before the number; the colour is that column.
+ *
+ * Typeface: IBM Plex, drawn for enterprise software. Plex Mono sets every figure,
+ * code and reference — a ledger is read down a column, and tabular numerals are
+ * the difference between scanning and squinting.
+ */
+
+:root {
+  /* ── Chrome and ink ───────────────────────────────────────────────────── */
+  --ink-900: #08222b;
+  --ink-800: #0d323e;
+  --ink-700: #14495a;
+  --ink-600: #2b6274;
+
+  --text:    #14232a;
+  --text-2:  #4f6069;
+  --text-3:  #85949b;
+  --text-on-dark:      #ffffff;
+  --text-on-dark-soft: rgba(255, 255, 255, 0.7);
+
+  --line:      #dedcd3;
+  --line-soft: #eceae2;
+  --surface:   #ffffff;
+  --surface-2: #faf9f5;
+  --canvas:    #f2f1ea;
+
+  /* ── Action and highlight ─────────────────────────────────────────────── */
+  --accent:      #0b7285;   /* primary action — teal, sits in the chrome family */
+  --accent-ink:  #075a6a;
+  --accent-wash: #e2f2f5;
+  --accent-rgb:  11, 114, 133;
+
+  --gold:      #d29a1c;     /* the one bright spark, used only to mark position */
+  --gold-ink:  #8a6210;
+  --gold-wash: #fdf3dc;
+
+  /* ── Ledger semantics ─────────────────────────────────────────────────── */
+  --petrol:      #0e6580;   /* basic pay — the foundation everything builds on */
+  --petrol-ink:  #0a4a5e;
+  --petrol-wash: #e3f0f5;
+
+  --ochre:       #b0590c;   /* allowances — earnings, warm */
+  --ochre-ink:   #7d3f08;
+  --ochre-wash:  #fbf0e2;
+
+  --brick:       #b0392a;   /* deductions — what is taken away */
+  --brick-ink:   #85281c;
+  --brick-wash:  #fbeceb;
+
+  --green:       #15803d;   /* net pay — the only green on the page */
+  --green-ink:   #0f5c2d;
+  --green-wash:  #e6f4ea;
+
+  --steel:       #43596b;   /* subtotals — structural, so deliberately neutral */
+  --steel-ink:   #31434f;
+  --steel-wash:  #eaeef1;
+
+  /* ── Salary rule categories ───────────────────────────────────────────── */
+  --cat-basic: var(--petrol);
+  --cat-alw:   var(--ochre);
+  --cat-gross: var(--steel);
+  --cat-ded:   var(--brick);
+  --cat-net:   var(--green);
+
+  /* ── Charts ───────────────────────────────────────────────────────────────
+   * Departments are ranked by cost, so neighbouring bars must stay apart. The
+   * order alternates warm and cool rather than walking a gradient.            */
+  --series-1: #0e6580;
+  --series-2: #b0590c;
+  --series-3: #3e6e9e;
+  --series-4: #b0392a;
+  --series-5: #15803d;
+  --series-6: #8a6210;
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas,
+    'Liberation Mono', monospace;
+
+  --size-hero:  28px;
+  --size-title: 19px;
+  --size-lg:    15px;
+  --size-base:  14px;
+  --size-sm:    13px;
+  --size-xs:    12px;
+  --size-micro: 11px;
+
+  --track-label: 0.07em;
+  --track-tight: -0.011em;
+
+  /* ── Shape and space ──────────────────────────────────────────────────── */
+  --radius:    5px;
+  --radius-sm: 3px;
+  --radius-lg: 8px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 36px;
+
+  /* Layered rather than blurred: a hairline for the edge, a soft drop for lift.
+     Business software should look printed, not floating. */
+  --shadow-sm: 0 1px 2px rgba(8, 34, 43, 0.07);
+  --shadow:    0 2px 6px rgba(8, 34, 43, 0.09), 0 1px 2px rgba(8, 34, 43, 0.06);
+  --shadow-lg: 0 18px 48px rgba(8, 34, 43, 0.28);
+
+  --nav-height: 50px;
+  --breadcrumb-height: 36px;
+}
