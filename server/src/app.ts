@@ -51,7 +51,9 @@ export function createApp(): Express {
   const app = express();
 
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
+  // Only as many hops as are actually in front of us. See config/env.ts: trusting
+  // the whole X-Forwarded-For chain lets a client choose the IP we audit.
+  app.set('trust proxy', config.trustProxy);
 
   app.use(crossOrigin);
   app.use(express.json({ limit: '1mb' }));

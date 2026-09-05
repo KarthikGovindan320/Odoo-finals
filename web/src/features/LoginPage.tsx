@@ -13,15 +13,28 @@ import { useAuth } from '../lib/auth.tsx';
 import { TextField } from '../components/Field.tsx';
 import { Modal } from '../components/Chrome.tsx';
 
-const DEMO_ACCOUNTS = [
-  { email: 'admin@peoplepay360.local', role: 'Admin', reach: 'Everything, plus user management' },
-  { email: 'payroll.manager@peoplepay360.local', role: 'HR Payroll Manager', reach: 'Payroll and salary rules' },
-  { email: 'payroll.user@peoplepay360.local', role: 'HR Payroll User', reach: 'Payroll; config read-only' },
-  { email: 'hr.manager@peoplepay360.local', role: 'HR Manager', reach: 'HR only — no payroll' },
-  { email: 'employee@peoplepay360.local', role: 'Employee', reach: 'Own records only' },
-];
+/**
+ * The demo account switcher exists so a reviewer can change roles in seconds and
+ * see that the permission boundary is real.
+ *
+ * It is compiled out of any production build. `import.meta.env.DEV` is a literal
+ * Vite substitutes at build time, so `vite build` leaves the branch statically
+ * false and the bundler drops the list, the password and the panel entirely --
+ * they are not merely hidden in the shipped JavaScript, they are absent from it.
+ */
+const SHOW_DEMO_ACCOUNTS = import.meta.env.DEV;
 
-const DEMO_PASSWORD = 'Password123!';
+const DEMO_ACCOUNTS = SHOW_DEMO_ACCOUNTS
+  ? [
+      { email: 'admin@peoplepay360.local', role: 'Admin', reach: 'Everything, plus user management' },
+      { email: 'payroll.manager@peoplepay360.local', role: 'HR Payroll Manager', reach: 'Payroll and salary rules' },
+      { email: 'payroll.user@peoplepay360.local', role: 'HR Payroll User', reach: 'Payroll; config read-only' },
+      { email: 'hr.manager@peoplepay360.local', role: 'HR Manager', reach: 'HR only — no payroll' },
+      { email: 'employee@peoplepay360.local', role: 'Employee', reach: 'Own records only' },
+    ]
+  : [];
+
+const DEMO_PASSWORD = import.meta.env.DEV ? 'Password123!' : '';
 
 export function LoginPage() {
   const { signIn } = useAuth();
@@ -95,6 +108,7 @@ export function LoginPage() {
           </button>
         </form>
 
+        {SHOW_DEMO_ACCOUNTS && (
         <div className="login__demo">
           <strong>Demo accounts — click one to fill the form</strong>
           {DEMO_ACCOUNTS.map((account) => (
@@ -108,6 +122,7 @@ export function LoginPage() {
             </button>
           ))}
         </div>
+        )}
       </div>
 
       {forgotPasswordOpen && (
@@ -118,38 +133,32 @@ export function LoginPage() {
 }
 
 /**
- * Not wired to a backend flow yet -- there is no reset-token table or mailer
- * for it. This collects the email and says the honest thing rather than
- * pretending an email went out.
+ * There is no self-service reset: no reset-token table, no mailer for it.
+ *
+ * This used to collect an email address and then say so, which asked the user
+ * for data nothing would ever read and implied a flow that does not exist. It
+ * now just says what to do. A form that cannot act on its input should not have
+ * an input.
  */
 function ForgotPasswordModal({ onClose }: { onClose: () => void }) {
-  const [email, setEmail] = useState('');
-  const [submitted, setSubmitted] = useState(false);
-
   return (
-    <Modal title="Reset your password" onClose={onClose}>
-      {submitted ? (
-        <p>
-          Password resets are not self-service yet. Contact your HR administrator
-          with the email above and they can reset it for you.
-        </p>
-      ) : (
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            setSubmitted(true);
-          }}
-        >
-          <TextField
-            label="Email" name="forgot-email" type="email" autoComplete="username" required
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-          <button className="btn btn--primary" type="submit" style={{ width: '100%' }}>
-            Continue
-          </button>
-        </form>
-      )}
+    <Modal
+      title="Reset your password"
+      onClose={onClose}
+      footer={
+        <button type="button" className="btn btn--primary" onClick={onClose}>
+          Close
+        </button>
+      }
+    >
+      <p style={{ marginTop: 0 }}>
+        Password resets are handled by your HR administrator — there is no
+        self-service reset yet.
+      </p>
+      <p className="muted" style={{ marginBottom: 0 }}>
+        Ask them to set a new password on your account, and you will be able to sign in with it
+        straight away.
+      </p>
     </Modal>
   );
 }

@@ -12,6 +12,7 @@ import { config, isProduction } from '../config/env.ts';
 import { login, logout, SESSION_COOKIE_NAME } from '../services/auth_service.ts';
 import { readCookie } from '../middleware/authenticate.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
+import { createThrottle } from '../lib/throttle.ts';
 import { email } from '../../../shared/schemas/common.ts';
 
 const loginInput = z.object({
@@ -19,17 +20,67 @@ const loginInput = z.object({
   password: z.string().min(1, 'Enter your password.'),
 });
 
+/**
+ * Two counters, because they answer different questions. The per-email one stops
+ * a single account being ground down from anywhere; the per-IP one stops one
+ * source working through a list of accounts. Either tripping is enough to refuse.
+ *
+ * The IP limit is the looser of the two on purpose -- a whole office behind one
+ * address shares it, and locking out a building to slow one attacker is a bad
+ * trade.
+ */
+const perEmail = createThrottle({
+  maxFailures: config.loginMaxAttempts,
+  windowMs: config.loginWindowMinutes * 60_000,
+});
+
+const perAddress = createThrottle({
+  maxFailures: config.loginMaxAttempts * 5,
+  windowMs: config.loginWindowMinutes * 60_000,
+});
+
 export const authRouter = Router();
 
 authRouter.post('/login', validateBody(loginInput), async (request, response) => {
   const credentials = parseOrThrow(loginInput, request.body);
 
-  const { token, user } = await login(credentials.email, credentials.password, {
-    ip: request.ip,
-    userAgent: request.get('user-agent'),
-  });
+  const emailKey = credentials.email.toLowerCase();
+  const addressKey = request.ip ?? 'unknown';
 
-  response.cookie(SESSION_COOKIE_NAME, token, {
+  for (const decision of [perEmail.check(emailKey), perAddress.check(addressKey)]) {
+    if (!decision.allowed) {
+      response.setHeader('Retry-After', String(decision.retryAfterSeconds));
+      throw new AppError(
+        'rate_limited',
+        `Too many failed sign-in attempts. Try again in ` +
+          `${Math.ceil(decision.retryAfterSeconds / 60)} minute(s), or ask an administrator to ` +
+          `reset your password.`,
+      );
+    }
+  }
+
+  let result;
+  try {
+    result = await login(credentials.email, credentials.password, {
+      ip: request.ip,
+      userAgent: request.get('user-agent'),
+    });
+  } catch (error) {
+    // Only a rejected credential counts against the limit. A deactivated account
+    // has already proved it knows the password, and a database fault is not the
+    // caller's doing.
+    if (error instanceof AppError && error.code === 'unauthenticated') {
+      perEmail.recordFailure(emailKey);
+      perAddress.recordFailure(addressKey);
+    }
+    throw error;
+  }
+
+  // A correct password is the end of any suspicion attached to this pair.
+  perEmail.clear(emailKey);
+  perAddress.clear(addressKey);
+
+  response.cookie(SESSION_COOKIE_NAME, result.token, {
     httpOnly: true,
     sameSite: 'lax',
     secure: isProduction,
@@ -37,7 +88,7 @@ authRouter.post('/login', validateBody(loginInput), async (request, response) =>
     path: '/',
   });
 
-  response.json({ user: serialize(user) });
+  response.json({ user: serialize(result.user) });
 });
 
 authRouter.post('/logout', async (request, response) => {
