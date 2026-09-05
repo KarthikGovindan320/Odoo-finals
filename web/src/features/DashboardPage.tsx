@@ -6,11 +6,14 @@
  * client-side fixture to fall back on, which is the spec's explicit requirement.
  */
 import { useState } from 'react';
+import { Link } from 'react-router';
 
 import { queryString } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
 import { useReference } from '../lib/use_reference.ts';
-import { formatMoney, formatMoneyShort, formatMoneyWhole, formatNumber } from '../lib/format.ts';
+import {
+  formatDate, formatMoney, formatMoneyShort, formatMoneyWhole, formatNumber,
+} from '../lib/format.ts';
 import { AlertList, Badge, Panel } from '../components/Chrome.tsx';
 import { BarChart, LineChart } from '../components/Charts.tsx';
 
@@ -23,6 +26,12 @@ type Dashboard = {
   };
   salary_cost_by_department: Array<{ department_name: string; employee_count: number; total_net: number }>;
   monthly_net_trend: Array<{ month: string; payslip_count: number; total_net: number }>;
+  contract_expiry: {
+    overdue: number;
+    within_30: number;
+    within_90: number;
+    soonest: string | null;
+  } | null;
   payrun_alerts: Array<{
     payrun_id: number; name: string; state: string;
     period_start: string; period_end: string; blockers: number; warnings: number;
@@ -217,6 +226,47 @@ export function DashboardPage() {
           <Panel title="Operational alerts">
             <AlertList items={data.warnings} />
           </Panel>
+
+          {/* Not filtered by the dashboard's period, unlike everything above it.
+              A contract ending in three weeks is equally urgent whether you are
+              looking at last month's payroll or next year's, and a warning that
+              disappears when you change the date range is one nobody can rely
+              on. Hidden entirely when there is nothing to say -- an empty alert
+              panel teaches people to ignore the alert panel. */}
+          {data.contract_expiry !== null
+            && data.contract_expiry.within_90 + data.contract_expiry.overdue > 0 && (
+            <Panel title="Contracts running out">
+              <div className="expiry">
+                {data.contract_expiry.overdue > 0 && (
+                  <Link className="expiry__band expiry__band--overdue" to="/contracts?expiring=0">
+                    <span className="expiry__count">{data.contract_expiry.overdue}</span>
+                    <span className="expiry__label">
+                      already ended, still running
+                    </span>
+                  </Link>
+                )}
+                {data.contract_expiry.within_30 > 0 && (
+                  <Link className="expiry__band expiry__band--soon" to="/contracts?expiring=30">
+                    <span className="expiry__count">{data.contract_expiry.within_30}</span>
+                    <span className="expiry__label">end within 30 days</span>
+                  </Link>
+                )}
+                {data.contract_expiry.within_90 > data.contract_expiry.within_30 && (
+                  <Link className="expiry__band" to="/contracts?expiring=90">
+                    <span className="expiry__count">
+                      {data.contract_expiry.within_90 - data.contract_expiry.within_30}
+                    </span>
+                    <span className="expiry__label">end in 31 to 90 days</span>
+                  </Link>
+                )}
+              </div>
+              {data.contract_expiry.soonest !== null && (
+                <p className="muted" style={{ fontSize: 12, marginBottom: 0 }}>
+                  The next one ends {formatDate(data.contract_expiry.soonest)}.
+                </p>
+              )}
+            </Panel>
+          )}
         </>
       )}
     </>

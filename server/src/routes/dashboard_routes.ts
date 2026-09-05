@@ -48,7 +48,8 @@ dashboard.get('/', 'dashboard:read', async (request, response) => {
      AND ($3::int IS NULL OR e.department_id = $3::int)
      AND ($4::int IS NULL OR e.employment_type_id = $4::int)`;
 
-  const [kpis, headcount, byDepartment, monthlyTrend, alerts, attendance, timeOff, topWarnings] =
+  const [kpis, headcount, byDepartment, monthlyTrend, alerts, attendance, timeOff, topWarnings,
+         contractExpiry] =
     await Promise.all([
       queryOne(
         `SELECT COALESCE(SUM(ps.net_amount), 0)      AS total_net,
@@ -158,6 +159,30 @@ dashboard.get('/', 'dashboard:read', async (request, response) => {
           LIMIT 12`,
         [periodStart, periodEnd],
       ),
+
+      /*
+       * Contracts running out.
+       *
+       * Deliberately not filtered by the dashboard's period: an end date three
+       * weeks away is equally urgent whether you are looking at last month's
+       * payroll or next year's, and a warning that disappears when you change
+       * the date range is a warning nobody can rely on.
+       */
+      queryOne(
+        `SELECT count(*) FILTER (WHERE c.end_date < CURRENT_DATE)::int AS overdue,
+                count(*) FILTER (WHERE c.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 30)::int
+                  AS within_30,
+                count(*) FILTER (WHERE c.end_date BETWEEN CURRENT_DATE AND CURRENT_DATE + 90)::int
+                  AS within_90,
+                min(c.end_date)::text AS soonest
+           FROM contracts c
+           JOIN employees e ON e.id = c.employee_id
+          WHERE c.state = 'running'
+            AND c.end_date IS NOT NULL
+            AND ($1::int IS NULL OR e.department_id = $1::int)
+            AND ($2::int IS NULL OR e.employment_type_id = $2::int)`,
+        [filters.department_id ?? null, filters.employment_type_id ?? null],
+      ),
     ]);
 
   // Attendance health: the share of records that are clean. A single number the
@@ -186,6 +211,7 @@ dashboard.get('/', 'dashboard:read', async (request, response) => {
       employment_type_id: filters.employment_type_id ?? null,
     },
     kpis: { ...(kpis as object), ...(headcount as object), attendance_health: attendanceHealth },
+    contract_expiry: contractExpiry,
     salary_cost_by_department: byDepartment,
     monthly_net_trend: monthlyTrend,
     payrun_alerts: alerts,

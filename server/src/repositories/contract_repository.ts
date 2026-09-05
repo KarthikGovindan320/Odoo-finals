@@ -26,6 +26,14 @@ export type ContractRow = {
   notes: string;
   /** True when this contract covers today -- what the list view highlights. */
   is_current: boolean;
+  /**
+   * Days until a running contract's end date. Negative once it has passed, null
+   * for an open-ended contract or one that is not running.
+   *
+   * Computed here rather than in the browser: "how many days until" depends on
+   * what day it is, and the tenant's day is not necessarily the viewer's.
+   */
+  days_until_end: number | null;
 };
 
 const SELECT_CONTRACT = `
@@ -39,7 +47,10 @@ const SELECT_CONTRACT = `
          j.title AS job_title,
          w.name  AS schedule_name,
          s.name  AS structure_name,
-         (c.state = 'running' AND c.validity @> CURRENT_DATE) AS is_current
+         (c.state = 'running' AND c.validity @> CURRENT_DATE) AS is_current,
+         CASE WHEN c.state = 'running' AND c.end_date IS NOT NULL
+              THEN (c.end_date - CURRENT_DATE)::int
+         END AS days_until_end
     FROM contracts c
     JOIN employees e              ON e.id = c.employee_id
     LEFT JOIN departments d       ON d.id = c.department_id
@@ -51,6 +62,10 @@ export async function listContracts(filters: {
   employeeId?: number | undefined;
   state?: string | undefined;
   search?: string | undefined;
+  /** Only running contracts ending within this many days. Negative days -- an
+   *  end date already passed -- are always included: an overdue contract is the
+   *  most urgent case, not one that has stopped being interesting. */
+  expiringWithin?: number | undefined;
   page: number;
   pageSize: number;
   scopedEmployeeId: number | null;
@@ -66,6 +81,13 @@ export async function listContracts(filters: {
   if (filters.state) {
     params.push(filters.state);
     conditions.push(`c.state = $${params.length}`);
+  }
+  if (filters.expiringWithin !== undefined) {
+    params.push(filters.expiringWithin);
+    conditions.push(
+      `c.state = 'running' AND c.end_date IS NOT NULL
+       AND c.end_date <= CURRENT_DATE + ($${params.length} || ' days')::interval`,
+    );
   }
   if (filters.search) {
     // See employee_repository: wildcards in the term are escaped, not honoured.

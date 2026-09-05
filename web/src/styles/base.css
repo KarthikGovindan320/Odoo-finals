@@ -1183,3 +1183,71 @@ a:hover { text-decoration: underline; }
 
 /* An invalidated attendance record: kept, struck through, and quiet. */
 .voided { color: var(--text-3); text-decoration-color: var(--brick); }
+
+/* ---------------------------------------------------------------------------
+   Audit trail
+   ---------------------------------------------------------------------------
+   A stream rather than a table: the interesting part of each entry is a
+   variable number of field changes, and a table cell holding four lines of
+   before-and-after is a table fighting its own shape. */
+
+.trail { list-style: none; margin: 0; padding: 0; }
+.trail__entry {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--line-soft);
+}
+.trail__entry:last-child { border-bottom: 0; }
+
+.trail__head {
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+  font-size: var(--size-xs);
+}
+.trail__when {
+  font-family: var(--font-mono); font-size: var(--size-micro); color: var(--text-3);
+  min-width: 132px;
+}
+.trail__what { color: var(--text-2); }
+.trail__spacer { flex: 1 1 auto; }
+.trail__who { color: var(--text-2); }
+.trail__history { font-size: var(--size-micro); }
+
+.trail__changes {
+  margin: var(--space-2) 0 0; padding: 0 0 0 132px;
+  display: grid; gap: 2px;
+}
+/* Falls back to a plain stack once the label gutter would leave no room for the
+   values themselves. */
+@media (max-width: 720px) { .trail__changes { padding-left: 0; } }
+
+.trail__change {
+  display: grid; grid-template-columns: 190px minmax(0, 1fr);
+  gap: var(--space-2); align-items: baseline;
+  font-size: var(--size-micro);
+}
+.trail__change dt { color: var(--text-3); }
+.trail__change dd {
+  margin: 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap;
+  font-family: var(--font-mono); overflow-wrap: anywhere;
+}
+.trail__from { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--line); }
+.trail__arrow { color: var(--text-3); }
+.trail__to { color: var(--ink-800); font-weight: 600; }
+.trail__more { font-size: var(--size-micro); margin-top: 4px; }
+
+/* Contracts running out: three bands, each a link into the filtered list. */
+.expiry { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }
+.expiry__band {
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--line); border-left: 3px solid var(--steel);
+  border-radius: var(--radius-sm); background: var(--surface);
+  color: inherit; text-decoration: none;
+}
+.expiry__band:hover { background: var(--surface-2); border-color: var(--text-3); }
+.expiry__band--soon { border-left-color: var(--ochre); }
+.expiry__band--overdue { border-left-color: var(--brick); }
+.expiry__count {
+  font-family: var(--font-mono); font-size: 21px; font-weight: 600;
+  font-variant-numeric: tabular-nums; color: var(--ink-800);
+}
+.expiry__label { font-size: var(--size-micro); color: var(--text-2); }

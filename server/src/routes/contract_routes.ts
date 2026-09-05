@@ -26,6 +26,8 @@ import {
 const listQuery = paginationQuery.safeExtend({
   employee_id: identifier.optional(),
   state: z.enum(['draft', 'running', 'expired', 'cancelled']).optional(),
+  /** Running contracts ending within this many days, overdue ones included. */
+  expiring_within: z.coerce.number().int().min(0).max(3650).optional(),
 });
 
 /** See employee_routes.ts: the list's filters, without its pagination. */
@@ -41,6 +43,7 @@ contracts.get('/', 'contract:read', async (request, response) => {
     employeeId: filters.employee_id,
     state: filters.state,
     search: filters.q,
+    expiringWithin: filters.expiring_within,
     page: filters.page,
     pageSize: filters.page_size,
     scopedEmployeeId: scopedEmployeeId(request),
@@ -59,6 +62,7 @@ contracts.get('/export', 'contract:read', async (request, response) => {
     employeeId: filters.employee_id,
     state: filters.state,
     search: filters.q,
+    expiringWithin: filters.expiring_within,
     page: 1,
     pageSize: EXPORT_ROW_LIMIT,
     scopedEmployeeId: scopedEmployeeId(request),

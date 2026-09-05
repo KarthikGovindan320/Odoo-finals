@@ -26,6 +26,8 @@ import { contractInput } from '../../../shared/schemas/hr.ts';
 type ContractRow = {
   id: number; reference: string; employee_id: number; employee_name: string;
   employee_number: string; start_date: string; end_date: string | null;
+  /** Days until a running contract ends. Negative once past, null if open-ended. */
+  days_until_end: number | null;
   wage: number; wage_type: string; state: string; notes: string;
   department_name: string | null; job_title: string | null;
   schedule_name: string | null; structure_name: string | null; is_current: boolean;
@@ -44,6 +46,27 @@ type Reference = {
   salary_structures: Array<{ id: number; name: string }>;
 };
 
+/**
+ * How close a running contract is to its end date.
+ *
+ * Silent beyond ninety days, because a badge on every fixed-term contract in the
+ * list is a badge nobody reads. The three bands it does show are the ones with
+ * something to do attached: renew it, start the conversation, or find out why
+ * somebody is still working under a contract that ended.
+ */
+function ExpiryBadge({ days }: { days: number | null }) {
+  if (days === null || days > 90) return null;
+
+  if (days < 0) {
+    return <Badge variant="danger">Ended {Math.abs(days)}d ago</Badge>;
+  }
+  return (
+    <Badge variant={days <= 30 ? 'warning' : 'info'}>
+      {days === 0 ? 'Ends today' : `Ends in ${days}d`}
+    </Badge>
+  );
+}
+
 export function ContractsPage() {
   const [params] = useSearchParams();
   const { can } = useAuth();
@@ -51,13 +74,18 @@ export function ContractsPage() {
 
   const [search, setSearch] = useState('');
   const [state, setState] = useState('');
+  // Seeded from the URL so the dashboard's "8 end within 30 days" can link
+  // straight to those eight rather than to the unfiltered list.
+  const [expiring, setExpiring] = useState(params.get('expiring') ?? '');
   const settledSearch = useDebounced(search);
   const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ContractRow | null>(null);
 
   const path = `/contracts${queryString({
-    q: settledSearch, state, employee_id: employeeFilter, page, page_size: 25,
+    q: settledSearch, state, employee_id: employeeFilter,
+    expiring_within: expiring === '' ? undefined : expiring,
+    page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<ContractRow>>(path);
 
@@ -80,7 +108,11 @@ export function ContractsPage() {
       render: (row) => (
         <span>
           {formatDate(row.start_date)} →{' '}
-          {row.end_date === null ? <span className="muted">open-ended</span> : formatDate(row.end_date)}
+          {row.end_date === null
+            ? <span className="muted">open-ended</span>
+            : formatDate(row.end_date)}
+          {' '}
+          <ExpiryBadge days={row.days_until_end} />
         </span>
       ) },
     { key: 'department', header: 'Department', render: (row) => row.department_name ?? '—' },
@@ -131,11 +163,23 @@ export function ContractsPage() {
               <ExportButtons
                 path="/contracts/export"
                 name="contracts"
-                query={{ q: settledSearch, state, employee_id: employeeFilter }}
+                query={{
+                q: settledSearch, state, employee_id: employeeFilter,
+                expiring_within: expiring === '' ? undefined : expiring,
+              }}
               />
             </>
           }
         >
+          <select className="select" style={{ width: 'auto' }} value={expiring}
+            onChange={(event) => { setPage(1); setExpiring(event.target.value); }}
+            aria-label="Filter by how soon the contract ends">
+            <option value="">Any end date</option>
+            <option value="0">Already ended</option>
+            <option value="30">Ending within 30 days</option>
+            <option value="90">Ending within 90 days</option>
+            <option value="365">Ending within a year</option>
+          </select>
           <select className="select" style={{ width: 'auto' }} value={state}
             onChange={(event) => { setPage(1); setState(event.target.value); }}
             aria-label="Filter by state">

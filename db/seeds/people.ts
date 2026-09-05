@@ -256,6 +256,11 @@ export async function seedPeople(
         departmentId: reference.departmentIds[departmentCode] as number,
         jobPositionId: reference.jobPositionIds[positionTitle] as number,
         employmentTypeId: reference.employmentTypeIds[employmentTypeCode] as number,
+        // Interns and contractors are engaged for a term; permanent staff are
+        // not. Without this every current contract ran open-ended, so the data
+        // held no expiry at all to warn about -- and a warning screen with
+        // nothing to warn about cannot be seen to work.
+        fixedTerm: employmentTypeCode === 'intern' || employmentTypeCode === 'contract',
         random,
       })),
     );
@@ -276,6 +281,8 @@ type ContractHistoryInput = {
   departmentId: number;
   jobPositionId: number;
   employmentTypeId: number;
+  /** Whether the current contract runs to a date rather than open-ended. */
+  fixedTerm: boolean;
   random: Random;
 };
 
@@ -301,15 +308,31 @@ async function insertContractHistory(
   for (let revision = 0; revision < revisionCount; revision += 1) {
     const isLast = revision === revisionCount - 1;
 
-    // Earlier contracts end before today; the current one runs open-ended.
-    const periodEnd = isLast
-      ? null
-      : addMonths(periodStart, random.int(8, 18));
+    /*
+     * Earlier contracts end before today. The current one runs open-ended for
+     * permanent staff and to a date for a fixed term -- spread from a few weeks
+     * overdue to a year out, so the expiry warnings have something at every
+     * distance rather than a cliff of them on one date.
+     */
+    const periodEnd = !isLast
+      ? addMonths(periodStart, random.int(8, 18))
+      : input.fixedTerm
+        ? addDays(input.today, random.int(-20, 330))
+        : null;
 
-    // A closed contract that would run past today is clamped, so history never
-    // claims an employee had two contracts at once.
+    /*
+     * A superseded contract that would run past today is clamped, so history
+     * never claims an employee had two contracts at once.
+     *
+     * Only the superseded ones. The current contract of a fixed-term engagement
+     * is *supposed* to end in the future -- that is what makes it expiring --
+     * and clamping it dragged every one of them into the past, which is how a
+     * seed produced thirty-six contracts that had all already lapsed.
+     */
     const clampedEnd =
-      periodEnd !== null && periodEnd >= input.today ? addDays(input.today, -45) : periodEnd;
+      !isLast && periodEnd !== null && periodEnd >= input.today
+        ? addDays(input.today, -45)
+        : periodEnd;
 
     if (clampedEnd !== null && clampedEnd <= periodStart) {
       break;

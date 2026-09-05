@@ -760,3 +760,160 @@ const ownFile = await download('/attendance/export?format=csv');
 check('an employee exports their own records and only those',
   ownFile.status === 200 && ownFile.csvRows === ownTotal && ownTotal < attendanceTotal,
   `${ownFile.csvRows} of their own, against ${attendanceTotal} in the whole table`);
+
+console.log('\n=== FLOW 8: who may rewrite whose attendance ===');
+/*
+ * The permission answers "may this role correct attendance at all". Rank
+ * answers "whose". Collapsing the two let an HR Manager -- who holds
+ * attendance:correct company-wide -- rewrite another HR Manager's timesheet, or
+ * their own, so the boundary is worth driving rather than reading.
+ */
+const ranked = {};
+for (const [key, email] of Object.entries({
+  admin: 'admin@peoplepay360.local',
+  hr: 'hr.manager@peoplepay360.local',
+  payroll: 'payroll.manager@peoplepay360.local',
+})) {
+  await call('POST', '/auth/login', { email, password: 'Password123!' });
+  const me = await call('GET', '/auth/me');
+  ranked[key] = me.body.user;
+}
+
+await call('POST', '/auth/login', {
+  email: 'hr.manager@peoplepay360.local', password: 'Password123!',
+});
+
+/** The newest live attendance record for one employee. */
+async function liveRecord(employeeId) {
+  const page = await call('GET', `/attendance?employee_id=${employeeId}&page_size=25`);
+  return (page.body.rows ?? []).find((row) => row.voided_at === null);
+}
+
+const juniorRecord = await liveRecord(ranked.admin.employee_id);
+check('the list says which records this viewer may act on',
+  juniorRecord !== undefined && juniorRecord.can_manage === false,
+  'an HR Manager may not manage the Admin');
+
+const ownRecord = await liveRecord(ranked.hr.employee_id);
+const ownVoid = await call('POST', `/attendance/${ownRecord.id}/void`,
+  { reason: 'Testing that this is refused' });
+check('nobody invalidates their own attendance', ownVoid.status === 403,
+  ownVoid.body.error?.message?.slice(0, 70));
+
+const seniorRecord = await liveRecord(ranked.payroll.employee_id);
+const seniorVoid = await call('POST', `/attendance/${seniorRecord.id}/void`,
+  { reason: 'Testing that this is refused' });
+check('an HR Manager cannot invalidate a record above their own level',
+  seniorVoid.status === 403, seniorVoid.body.error?.message?.slice(0, 70));
+
+// Somebody they do outrank.
+const staff = await call('GET', '/employees?page_size=1&q=');
+const subjectId = staff.body.rows[0].id;
+const auditTarget = await liveRecord(subjectId);
+
+const noReason = await call('POST', `/attendance/${auditTarget.id}/void`, { reason: 'bad' });
+check('an invalidation without a real reason is refused', noReason.status === 422,
+  noReason.body.error?.message?.slice(0, 60));
+
+const beforeHours = Number(auditTarget.worked_hours ?? 0);
+const voided = await call('POST', `/attendance/${auditTarget.id}/void`,
+  { reason: 'Duplicate of the earlier punch on the same day' });
+check('an authorised invalidation succeeds and is attributed',
+  voided.status === 200 && voided.body.voided_at !== null
+    && voided.body.void_reason.startsWith('Duplicate'),
+  `voided by ${voided.body.voided_by}`);
+
+// The point of voiding: the record stops counting.
+const daily = await call('GET', `/attendance?employee_id=${subjectId}&page_size=50`);
+const stillListed = daily.body.rows.find((row) => row.id === auditTarget.id);
+check('the record is kept and shown, not deleted',
+  stillListed !== undefined && stillListed.voided_at !== null);
+
+const correctVoided = await call('PATCH', `/attendance/${auditTarget.id}`, {
+  employee_id: subjectId,
+  check_in: auditTarget.check_in,
+  check_out: auditTarget.check_out,
+  edit_reason: 'Trying to correct an invalidated record',
+});
+check('an invalidated record cannot have its times corrected',
+  correctVoided.status === 409, correctVoided.body.error?.message?.slice(0, 60));
+
+// The repair the old constraint made impossible: void the bad punch, enter the
+// real one over the same window.
+const replacement = await call('POST', '/attendance', {
+  employee_id: subjectId,
+  check_in: auditTarget.check_in,
+  check_out: auditTarget.check_out,
+});
+check('a replacement may take the invalidated record’s place',
+  replacement.status === 201, `HTTP ${replacement.status}`);
+
+const restoreBlocked = await call('POST', `/attendance/${auditTarget.id}/restore`);
+check('and restoring the original is then refused, because both cannot be true',
+  restoreBlocked.status === 409, restoreBlocked.body.error?.message?.slice(0, 60));
+
+void beforeHours;
+
+console.log('\n=== FLOW 9: the audit trail, and contracts running out ===');
+
+const trail = await call('GET', '/audit?page_size=5');
+check('the audit trail is readable', trail.status === 200 && trail.body.total > 0,
+  `${trail.body.total.toLocaleString('en-IN')} recorded changes`);
+check('entries name a person, a record and the fields that moved',
+  trail.body.rows.every((row) => typeof row.subject === 'string' && row.subject !== '')
+    && trail.body.rows.some((row) => row.changes.length > 0),
+  trail.body.rows[0]?.subject);
+
+// The void just made is the newest thing that happened, and must be in it.
+const attendanceTrail = await call(
+  'GET', `/audit?table_name=attendance_records&record_id=${auditTarget.id}`);
+const voidEntry = attendanceTrail.body.rows.find((row) =>
+  row.changes.some((change) => change.field === 'voided_at' && change.to !== null));
+check('an invalidation reaches the audit trail with its actor',
+  voidEntry !== undefined && voidEntry.actor_email === 'hr.manager@peoplepay360.local',
+  `${voidEntry?.actor_email} ${voidEntry?.changed_at?.slice(0, 19)}`);
+
+/*
+ * Bank details are the reason an audit trail exists and the reason it is a
+ * disclosure risk. That the field changed must be visible; the number must not
+ * be -- and the database enforces that before the row is written, so the value
+ * is not in audit_log to leak rather than merely hidden on the way out.
+ */
+const bankTrail = await call('GET', '/audit?table_name=employees&page_size=50');
+const sensitive = bankTrail.body.rows
+  .flatMap((row) => row.changes)
+  .filter((change) => ['bank_account_number', 'bank_ifsc', 'personal_email', 'address']
+    .includes(change.field));
+check('sensitive fields say that they changed without saying to what',
+  sensitive.length > 0
+    && sensitive.every((change) =>
+      [change.from, change.to].every((value) => value === null || value === '[redacted]')),
+  `${sensitive.length} sensitive changes, all redacted`);
+
+const expiring30 = await call('GET', '/contracts?expiring_within=30&page_size=1');
+const expiring90 = await call('GET', '/contracts?expiring_within=90&page_size=1');
+check('contracts can be filtered by how soon they end',
+  expiring30.body.total > 0 && expiring90.body.total >= expiring30.body.total,
+  `${expiring30.body.total} within 30 days, ${expiring90.body.total} within 90`);
+
+const withDays = await call('GET', '/contracts?expiring_within=90&page_size=5');
+check('each carries the days remaining, counted by the server',
+  withDays.body.rows.every((row) => typeof row.days_until_end === 'number'),
+  withDays.body.rows.map((row) => row.days_until_end).join(', '));
+
+await call('POST', '/auth/login', {
+  email: 'payroll.manager@peoplepay360.local', password: 'Password123!',
+});
+const auditDash = await call('GET', '/dashboard?period_start=2026-06-01&period_end=2027-12-31');
+check('the dashboard counts them without being asked for a period',
+  auditDash.body.contract_expiry !== null
+    && auditDash.body.contract_expiry.within_90 >= auditDash.body.contract_expiry.within_30,
+  JSON.stringify(auditDash.body.contract_expiry));
+
+// An employee holds no audit:read, and the trail is the whole company's.
+await call('POST', '/auth/login', {
+  email: 'employee@peoplepay360.local', password: 'Password123!',
+});
+const refusedTrail = await call('GET', '/audit?page_size=1');
+check('an employee cannot read the audit trail', refusedTrail.status === 403,
+  `HTTP ${refusedTrail.status}`);
