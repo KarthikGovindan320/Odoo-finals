@@ -12,6 +12,7 @@ import type { QueryParameter } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { parseOrThrow } from '../middleware/validate.ts';
 import { identifier, isoDate } from '../../../shared/schemas/common.ts';
+import { TENANT_TIMEZONE } from '../../../shared/tenant.ts';
 import { z } from 'zod';
 
 const filterQuery = z.object({
@@ -73,17 +74,21 @@ dashboard.get('/', 'dashboard:read', async (request, response) => {
       ),
 
       query(
-        `SELECT d.name AS department_name,
+        // LEFT JOIN, and an explicit bucket for the unassigned.
+        // An inner join here silently dropped every employee without a
+        // department, so this chart could not sum to the headline total above it
+        // -- which is the first thing anyone checks on a payroll dashboard.
+        `SELECT COALESCE(d.name, 'Unassigned')      AS department_name,
                 count(DISTINCT ps.employee_id)::int AS employee_count,
                 COALESCE(SUM(ps.net_amount), 0)     AS total_net
            FROM payslips ps
-           JOIN employees e   ON e.id = ps.employee_id
-           JOIN departments d ON d.id = e.department_id
+           JOIN employees e        ON e.id = ps.employee_id
+           LEFT JOIN departments d ON d.id = e.department_id
           WHERE ps.state IN ('validated', 'paid')
             AND ps.period_start >= $1::date AND ps.period_end <= $2::date
             AND ($3::int IS NULL OR e.department_id = $3::int)
             AND ($4::int IS NULL OR e.employment_type_id = $4::int)
-          GROUP BY d.name
+          GROUP BY COALESCE(d.name, 'Unassigned')
           ORDER BY total_net DESC`,
         scope,
       ),
@@ -122,10 +127,10 @@ dashboard.get('/', 'dashboard:read', async (request, response) => {
                 COALESCE(ROUND(SUM(a.worked_hours), 1), 0)               AS total_hours
            FROM attendance_records a
            JOIN employees e ON e.id = a.employee_id
-          WHERE (a.check_in AT TIME ZONE 'Asia/Kolkata')::date BETWEEN $1::date AND $2::date
+          WHERE (a.check_in AT TIME ZONE $5)::date BETWEEN $1::date AND $2::date
             AND ($3::int IS NULL OR e.department_id = $3::int)
             AND ($4::int IS NULL OR e.employment_type_id = $4::int)`,
-        scope,
+        [...scope, TENANT_TIMEZONE],
       ),
 
       queryOne(

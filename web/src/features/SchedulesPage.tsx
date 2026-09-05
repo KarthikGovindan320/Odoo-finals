@@ -10,6 +10,7 @@ import type { FormEvent } from 'react';
 
 import { api, ApiError } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
+import { TENANT_TIMEZONE } from '../../../shared/tenant.ts';
 import { DAY_NAMES, humanize } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel } from '../components/Chrome.tsx';
@@ -31,6 +32,7 @@ export function SchedulesPage() {
   const { data, loading, error, reload } = useResource<{ rows: ScheduleRow[] }>('/working-schedules');
   const [openId, setOpenId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
+  const [editing, setEditing] = useState<(ScheduleRow & { lines: ScheduleLine[] }) | null>(null);
 
   return (
     <>
@@ -80,7 +82,21 @@ export function SchedulesPage() {
         )}
       </Panel>
 
-      {openId !== null && <ScheduleDetailModal id={openId} onClose={() => setOpenId(null)} />}
+      {openId !== null && (
+        <ScheduleDetailModal
+          id={openId}
+          canEdit={can('schedule:write')}
+          onEdit={(schedule) => { setOpenId(null); setEditing(schedule); }}
+          onClose={() => setOpenId(null)}
+        />
+      )}
+      {editing !== null && (
+        <ScheduleFormModal
+          schedule={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); reload(); }}
+        />
+      )}
       {creating && (
         <ScheduleFormModal onClose={() => setCreating(false)}
           onSaved={() => { setCreating(false); reload(); }} />
@@ -89,13 +105,30 @@ export function SchedulesPage() {
   );
 }
 
-function ScheduleDetailModal({ id, onClose }: { id: number; onClose: () => void }) {
+function ScheduleDetailModal({
+  id, canEdit, onEdit, onClose,
+}: {
+  id: number;
+  canEdit: boolean;
+  onEdit: (schedule: ScheduleRow & { lines: ScheduleLine[] }) => void;
+  onClose: () => void;
+}) {
   const { data, loading } = useResource<ScheduleRow & { lines: ScheduleLine[] }>(
     `/working-schedules/${id}`,
   );
 
   return (
-    <Modal title={data?.name ?? 'Working schedule'} onClose={onClose}>
+    <Modal
+      title={data?.name ?? 'Working schedule'}
+      onClose={onClose}
+      footer={
+        canEdit && data !== null ? (
+          <button type="button" className="btn btn--primary" onClick={() => onEdit(data)}>
+            Edit schedule
+          </button>
+        ) : undefined
+      }
+    >
       {loading || data === null ? (
         <div className="loading">Loading…</div>
       ) : (
@@ -133,13 +166,34 @@ function ScheduleDetailModal({ id, onClose }: { id: number; onClose: () => void 
 
 type DraftLine = { day_of_week: number; start_time: string; end_time: string; break_minutes: number };
 
-function ScheduleFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const [name, setName] = useState('');
-  const [scheduleType, setScheduleType] = useState('full_time');
+/**
+ * Create or edit a working schedule.
+ *
+ * PATCH /working-schedules/:id existed with nothing calling it, so a schedule's
+ * days could never be corrected once saved -- and the schedule is what payroll
+ * counts scheduled days from, so a wrong one is a wrong payslip every month.
+ */
+function ScheduleFormModal({
+  schedule, onClose, onSaved,
+}: {
+  schedule?: { id: number; name: string; schedule_type: string; lines: ScheduleLine[] };
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [name, setName] = useState(schedule?.name ?? '');
+  const [scheduleType, setScheduleType] = useState(schedule?.schedule_type ?? 'full_time');
   const [lines, setLines] = useState<DraftLine[]>(
-    [1, 2, 3, 4, 5].map((day) => ({
-      day_of_week: day, start_time: '09:00', end_time: '18:00', break_minutes: 60,
-    })),
+    schedule !== undefined
+      ? schedule.lines.map((line) => ({
+          day_of_week: line.day_of_week,
+          // The API returns times as HH:MM:SS; the input wants HH:MM.
+          start_time: line.start_time.slice(0, 5),
+          end_time: line.end_time.slice(0, 5),
+          break_minutes: line.break_minutes,
+        }))
+      : [1, 2, 3, 4, 5].map((day) => ({
+          day_of_week: day, start_time: '09:00', end_time: '18:00', break_minutes: 60,
+        })),
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -163,7 +217,7 @@ function ScheduleFormModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     setFormError(null);
 
     const parsed = workingScheduleInput.safeParse({
-      name, schedule_type: scheduleType, timezone: 'Asia/Kolkata', lines,
+      name, schedule_type: scheduleType, timezone: TENANT_TIMEZONE, lines,
     });
     if (!parsed.success) {
       setErrors(Object.fromEntries(
@@ -175,7 +229,11 @@ function ScheduleFormModal({ onClose, onSaved }: { onClose: () => void; onSaved:
     setErrors({});
     setBusy(true);
     try {
-      await api.post('/working-schedules', parsed.data);
+      if (schedule === undefined) {
+        await api.post('/working-schedules', parsed.data);
+      } else {
+        await api.patch(`/working-schedules/${schedule.id}`, parsed.data);
+      }
       onSaved();
     } catch (error: unknown) {
       setFormError(error instanceof ApiError ? error.message : 'Could not save the schedule.');
@@ -186,14 +244,14 @@ function ScheduleFormModal({ onClose, onSaved }: { onClose: () => void; onSaved:
 
   return (
     <Modal
-      title="New working schedule"
+      title={schedule === undefined ? 'New working schedule' : `Edit ${schedule.name}`}
       onClose={onClose}
       wide
       footer={
         <>
           <button className="btn" onClick={onClose} disabled={busy}>Cancel</button>
           <button className="btn btn--primary" form="schedule-form" type="submit" disabled={busy}>
-            {busy ? 'Saving…' : 'Save schedule'}
+            {busy ? 'Saving…' : schedule === undefined ? 'Create schedule' : 'Save changes'}
           </button>
         </>
       }
