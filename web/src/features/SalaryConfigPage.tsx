@@ -64,10 +64,10 @@ export function SalaryConfigPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 'var(--space-3)' }}>
-        <button className={`btn btn--sm${tab === 'structures' ? ' btn--plum' : ''}`}
+      <div className="segmented" style={{ marginBottom: 'var(--space-3)' }}>
+        <button className={`btn btn--sm${tab === 'structures' ? ' btn--selected' : ''}`}
           onClick={() => setTab('structures')}>Salary structures</button>
-        <button className={`btn btn--sm${tab === 'rules' ? ' btn--plum' : ''}`}
+        <button className={`btn btn--sm${tab === 'rules' ? ' btn--selected' : ''}`}
           onClick={() => setTab('rules')}>Salary rules</button>
       </div>
 
@@ -199,7 +199,7 @@ function RuleTable({
                 )}
               </td>
               <td>
-                <Badge variant={rule.category_sign < 0 ? 'danger' : 'plum'}>{rule.category_code}</Badge>
+                <Badge variant={rule.category_sign < 0 ? 'danger' : 'petrol'}>{rule.category_code}</Badge>
               </td>
               <td>{humanize(rule.computation_type)}</td>
               <td className="mono" style={{ fontSize: 11 }}>{ruleDefinition(rule)}</td>

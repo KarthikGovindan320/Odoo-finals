@@ -9,7 +9,7 @@ import { useState } from 'react';
 
 import { queryString } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
-import { formatMoney, formatMoneyShort, formatNumber } from '../lib/format.ts';
+import { formatMoney, formatMoneyShort, formatMoneyWhole, formatNumber } from '../lib/format.ts';
 import { AlertList, Badge, Panel } from '../components/Chrome.tsx';
 import { BarChart, LineChart } from '../components/Charts.tsx';
 
@@ -71,20 +71,20 @@ export function DashboardPage() {
         </div>
       </div>
 
-      <Panel title="Filters">
-        <div className="form-grid">
-          <label className="field">
-            <span className="field__label">Period from</span>
+      <div className="panel">
+        <div className="toolbar">
+          <label className="filter">
+            <span>Period</span>
             <input className="input" type="date" value={periodStart}
-              onChange={(event) => setPeriodStart(event.target.value)} />
+              onChange={(event) => setPeriodStart(event.target.value)} aria-label="Period from" />
           </label>
-          <label className="field">
-            <span className="field__label">Period to</span>
+          <span className="muted">→</span>
+          <label className="filter">
             <input className="input" type="date" value={periodEnd}
-              onChange={(event) => setPeriodEnd(event.target.value)} />
+              onChange={(event) => setPeriodEnd(event.target.value)} aria-label="Period to" />
           </label>
-          <label className="field">
-            <span className="field__label">Department</span>
+          <label className="filter">
+            <span>Department</span>
             <select className="select" value={departmentId}
               onChange={(event) => setDepartmentId(event.target.value)}>
               <option value="">All departments</option>
@@ -93,8 +93,8 @@ export function DashboardPage() {
               ))}
             </select>
           </label>
-          <label className="field">
-            <span className="field__label">Employee type</span>
+          <label className="filter">
+            <span>Employee type</span>
             <select className="select" value={employmentTypeId}
               onChange={(event) => setEmploymentTypeId(event.target.value)}>
               <option value="">All types</option>
@@ -103,8 +103,10 @@ export function DashboardPage() {
               ))}
             </select>
           </label>
+          <span className="toolbar__spacer" />
+          <span className="toolbar__count">Every figure below is a live aggregate</span>
         </div>
-      </Panel>
+      </div>
 
       {error !== null && <div className="error-box">{error}</div>}
       {loading && <div className="loading">Loading dashboard…</div>}
@@ -112,18 +114,18 @@ export function DashboardPage() {
       {data !== null && (
         <>
           <div className="kpi-row">
-            <Kpi label="Total net paid" value={formatMoney(data.kpis.total_net)}
+            <Kpi tone="green" label="Total net paid" value={formatMoneyWhole(data.kpis.total_net)}
               hint={`${formatNumber(data.kpis.employees_paid)} employees paid`} />
-            <Kpi label="Payslips generated" value={formatNumber(data.kpis.payslip_count)}
+            <Kpi tone="petrol" label="Payslips generated" value={formatNumber(data.kpis.payslip_count)}
               hint={`Gross ${formatMoneyShort(data.kpis.total_gross)}`} />
-            <Kpi label="Average net salary" value={formatMoney(data.kpis.average_net)}
+            <Kpi tone="steel" label="Average net salary" value={formatMoneyWhole(data.kpis.average_net)}
               hint="Per payslip in this period" />
-            <Kpi label="Approved time off" value={`${formatNumber(data.time_off_overview?.approved_days ?? 0)} days`}
+            <Kpi tone="ochre" label="Approved time off" value={`${formatNumber(data.time_off_overview?.approved_days ?? 0)} days`.replace(/\s+/g, " ")}
               hint={`${formatNumber(data.time_off_overview?.pending_requests ?? 0)} still pending`} />
-            <Kpi label="Attendance health"
+            <Kpi tone="accent" label="Attendance health"
               value={data.kpis.attendance_health === null ? '—' : `${data.kpis.attendance_health}%`}
               hint="Records with no late arrival or missing check-out" />
-            <Kpi label="Headcount" value={formatNumber(data.kpis.headcount)}
+            <Kpi tone="brick" label="Headcount" value={formatNumber(data.kpis.headcount)}
               hint={`${formatNumber(data.kpis.active_headcount)} active`} />
           </div>
 
@@ -220,9 +222,15 @@ export function DashboardPage() {
   );
 }
 
-function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
+type KpiTone = 'accent' | 'petrol' | 'ochre' | 'brick' | 'green' | 'steel';
+
+function Kpi({
+  label, value, hint, tone,
+}: {
+  label: string; value: string; hint?: string; tone: KpiTone;
+}) {
   return (
-    <div className="kpi">
+    <div className={`kpi kpi--${tone}`}>
       <div className="kpi__label">{label}</div>
       <div className="kpi__value">{value}</div>
       {hint !== undefined && <div className="kpi__hint">{hint}</div>}

@@ -98,10 +98,10 @@ export function EmployeesPage() {
           </span>
         </div>
         <div className="page__actions">
-          <div className="btn-group" style={{ display: 'flex', gap: 4 }}>
-            <button className={`btn btn--sm${view === 'list' ? ' btn--plum' : ''}`}
+          <div className="segmented">
+            <button className={`btn btn--sm${view === 'list' ? ' btn--selected' : ''}`}
               onClick={() => setView('list')}>List</button>
-            <button className={`btn btn--sm${view === 'kanban' ? ' btn--plum' : ''}`}
+            <button className={`btn btn--sm${view === 'kanban' ? ' btn--selected' : ''}`}
               onClick={() => setView('kanban')}>Kanban</button>
           </div>
           {can('employee:write') && (
@@ -208,7 +208,7 @@ function KanbanByDepartment({
         <div className="kanban__column" key={department}>
           <div className="kanban__column-header">
             <span>{department}</span>
-            <span>{members.length}</span>
+            <span className="kanban__count">{members.length}</span>
           </div>
           <div className="kanban__cards">
             {members.map((row) => (

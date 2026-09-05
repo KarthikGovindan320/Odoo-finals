@@ -74,7 +74,7 @@ export function App() {
         </div>
 
         <div className="topnav__user">
-          <span>{user.employee_name ?? user.email}</span>
+          <span className="topnav__username">{user.employee_name ?? user.email}</span>
           <span className="topnav__role">{user.role_name}</span>
           <button className="btn btn--sm" onClick={() => void signOut()}>Sign out</button>
         </div>

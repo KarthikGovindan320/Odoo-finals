@@ -66,7 +66,7 @@ export function TimeOffPage() {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 'var(--space-3)' }}>
+      <div className="segmented" style={{ marginBottom: 'var(--space-3)' }}>
         {([
           ['requests', 'Requests'],
           ['allocations', 'Allocations'],
@@ -74,7 +74,7 @@ export function TimeOffPage() {
         ] as Array<[Tab, string]>).map(([key, label]) => (
           <button
             key={key}
-            className={`btn btn--sm${tab === key ? ' btn--plum' : ''}`}
+            className={`btn btn--sm${tab === key ? ' btn--selected' : ''}`}
             onClick={() => setTab(key)}
           >
             {label}

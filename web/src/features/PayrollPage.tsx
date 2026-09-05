@@ -126,10 +126,10 @@ export function PayrollPage() {
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 'var(--space-3)' }}>
-        <button className={`btn btn--sm${tab === 'payruns' ? ' btn--plum' : ''}`}
+      <div className="segmented" style={{ marginBottom: 'var(--space-3)' }}>
+        <button className={`btn btn--sm${tab === 'payruns' ? ' btn--selected' : ''}`}
           onClick={() => setTab('payruns')}>Payruns</button>
-        <button className={`btn btn--sm${tab === 'payslips' ? ' btn--plum' : ''}`}
+        <button className={`btn btn--sm${tab === 'payslips' ? ' btn--selected' : ''}`}
           onClick={() => setTab('payslips')}>Payslips</button>
       </div>
 
