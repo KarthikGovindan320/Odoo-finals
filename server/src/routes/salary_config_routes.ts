@@ -5,38 +5,48 @@
  * defines the two payroll roles: HR Payroll User may look at the configuration,
  * HR Payroll Manager may change it.
  *
- * Formulas are validated by parsing them before they are stored, so a typo is
- * caught on the configuration screen rather than at 2am during a payrun.
+ * Formulas are checked before they are stored -- syntax, variable names,
+ * function names and argument counts -- so a typo is caught on the configuration
+ * screen rather than at 2am during a payrun. Parsing alone was not enough:
+ * names are resolved by the evaluator at compute time, so `contract.wag` used to
+ * parse cleanly and fail during the run. See expression/analyze.ts.
  */
 import { notFound } from '../errors/app_error.ts';
-import { query, queryOne, withTransaction } from '../db/pool.ts';
+import { query, queryOne, withTransaction, insertedId } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
 import { identifier } from '../../../shared/schemas/common.ts';
 import { salaryRuleInput, salaryStructureInput } from '../../../shared/schemas/payroll.ts';
-import { parse } from '../services/payroll/expression/parser.ts';
-import { ExpressionSyntaxError } from '../services/payroll/expression/lexer.ts';
+import { analyzeExpression } from '../services/payroll/expression/analyze.ts';
 import { AppError } from '../errors/app_error.ts';
 
 const config = createGuardedRouter();
 
-/** Parses without evaluating, so a malformed rule never reaches the database. */
-function assertParses(expression: string | null | undefined, field: string, label: string): void {
+/**
+ * Checks an expression before it is stored: syntax, variable names, function
+ * names and argument counts.
+ *
+ * This used to call parse() alone, which only answers whether the text is
+ * well-formed. Names are resolved by the evaluator during a payrun, so
+ * `contract.wag * 2` saved without complaint and failed at 2am — the exact
+ * outcome the configuration screen exists to prevent. analyzeExpression()
+ * resolves everything resolvable without a payslip in hand.
+ */
+function assertValid(expression: string | null | undefined, field: string, label: string): void {
   if (!expression) {
     return;
   }
-  try {
-    parse(expression);
-  } catch (error) {
-    if (error instanceof ExpressionSyntaxError) {
-      throw new AppError(
-        'validation_failed',
-        `${label} is not a valid expression: ${error.message}`,
-        { fields: [{ field, message: error.message }] },
-      );
-    }
-    throw error;
+
+  const problems = analyzeExpression(expression);
+  if (problems.length === 0) {
+    return;
   }
+
+  throw new AppError(
+    'validation_failed',
+    `${label} is not valid: ${problems.map((problem) => problem.message).join(' ')}`,
+    { fields: problems.map((problem) => ({ field, message: problem.message })) },
+  );
 }
 
 config.get('/structures', 'salary_config:read', async (_request, response) => {
@@ -46,7 +56,8 @@ config.get('/structures', 'salary_config:read', async (_request, response) => {
             (SELECT count(*)::int FROM contracts c
               WHERE c.salary_structure_id = s.id AND c.state = 'running') AS employee_count
        FROM salary_structures s
-      ORDER BY s.name`,
+      ORDER BY s.name
+      LIMIT 500`,
   );
   response.json({ rows });
 });
@@ -87,7 +98,7 @@ config.post('/structures', 'salary_config:write', validateBody(salaryStructureIn
        VALUES ($1, $2, $3, $4) RETURNING id`,
       [input.code, input.name, input.currency_code, input.description ?? ''],
     );
-    const structureId = (created as { id: number }).id;
+    const structureId = insertedId(created, 'a salary structure');
 
     for (const rule of input.rules) {
       await client.query(
@@ -140,15 +151,16 @@ config.get('/rules', 'salary_config:read', async (_request, response) => {
             (SELECT count(*)::int FROM salary_structure_rules sr WHERE sr.salary_rule_id = r.id) AS structure_count
        FROM salary_rules r
        JOIN salary_rule_categories c ON c.id = r.category_id
-      ORDER BY c.sequence, r.code`,
+      ORDER BY c.sequence, r.code
+      LIMIT 1000`,
   );
   response.json({ rows });
 });
 
 config.post('/rules', 'salary_config:write', validateBody(salaryRuleInput), async (request, response) => {
   const input = request.body as typeof salaryRuleInput._output;
-  assertParses(input.formula_expression, 'formula_expression', 'The formula');
-  assertParses(input.condition_expression, 'condition_expression', 'The condition');
+  assertValid(input.formula_expression, 'formula_expression', 'The formula');
+  assertValid(input.condition_expression, 'condition_expression', 'The condition');
 
   const row = await withTransaction(
     (client) =>
@@ -174,10 +186,39 @@ config.post('/rules', 'salary_config:write', validateBody(salaryRuleInput), asyn
 config.patch('/rules/:id', 'salary_config:write', validateBody(salaryRuleInput), async (request, response) => {
   const id = parseOrThrow(identifier, request.params.id);
   const input = request.body as typeof salaryRuleInput._output;
-  assertParses(input.formula_expression, 'formula_expression', 'The formula');
-  assertParses(input.condition_expression, 'condition_expression', 'The condition');
+  assertValid(input.formula_expression, 'formula_expression', 'The formula');
+  assertValid(input.condition_expression, 'condition_expression', 'The condition');
 
   await withTransaction(async (client) => {
+    // percentage_base_code refers to a rule by its code, as free text with no
+    // foreign key behind it. Renaming a code therefore orphans every rule that
+    // takes a percentage of it, and the failure only surfaces at the next payrun
+    // as "no rule or category with that code has been computed yet".
+    const current = await client.queryOne<{ code: string }>(
+      'SELECT code FROM salary_rules WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    if (current === null) {
+      throw notFound('Salary rule', id);
+    }
+
+    if (current.code !== input.code) {
+      const dependents = await client.query<{ code: string }>(
+        'SELECT code FROM salary_rules WHERE percentage_base_code = $1 AND id <> $2 ORDER BY code',
+        [current.code, id],
+      );
+
+      if (dependents.length > 0) {
+        throw new AppError(
+          'conflict',
+          `${dependents.length} other rule(s) take a percentage of '${current.code}': ` +
+            `${dependents.map((row) => row.code).join(', ')}. Renaming it would leave them ` +
+            `pointing at a code that no longer exists. Update those rules first.`,
+          { dependents: dependents.map((row) => row.code) },
+        );
+      }
+    }
+
     const updated = await client.query(
       `UPDATE salary_rules
           SET code = $2, name = $3, category_id = $4, computation_type = $5,
