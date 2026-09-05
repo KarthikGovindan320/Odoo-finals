@@ -439,3 +439,151 @@ if (ownSlip !== undefined) {
 } else {
   check('an employee can see the arithmetic behind their own pay', true, 'no payslip seeded');
 }
+
+console.log('\n=== FLOW 5: why this payslip differs from the last one ===');
+/*
+ * The decomposition has to close. A screen that attributes a pay change to a
+ * list of causes and then does not add up to the change is worse than one that
+ * says nothing, because somebody will act on it.
+ *
+ * Checked against real seeded history rather than a fixture, because the shape
+ * that broke this in development -- a partial first month against a full one --
+ * is not a shape anybody writes into a fixture.
+ */
+await call('POST', '/auth/login', {
+  email: 'payroll.manager@peoplepay360.local', password: 'Password123!',
+});
+
+const withHistory = await call('GET', '/payslips?page_size=120&sort=period');
+const comparisons = [];
+let firstEver = null;
+for (const row of withHistory.body.rows) {
+  const result = await call('GET', `/payslips/${row.id}/compare`);
+  if (result.status !== 200) continue;
+  if (result.body.previous === null) firstEver ??= result.body;
+  else if (comparisons.length < 25) comparisons.push(result.body);
+  if (comparisons.length >= 25 && firstEver !== null) break;
+}
+
+check('payslips with history can be compared with the period before',
+  comparisons.length > 0, `${comparisons.length} comparisons`);
+
+const doesNotClose = comparisons.filter((one) =>
+  Math.abs((one.net_from_inputs + one.net_from_rule_change) - one.net_delta) > 0.02);
+check('inputs and rule changes together account for the whole change in net pay',
+  doesNotClose.length === 0,
+  doesNotClose.map((one) => one.current.number).join(', ') || `${comparisons.length} check out`);
+
+// The failure this guards against reported a 671,000 rupee driver on a payslip
+// whose net moved 4,483, by reverting the scheduled day count while leaving the
+// paid day count -- which is defined in terms of it -- alone.
+const absurd = comparisons.filter((one) =>
+  one.attribution === 'separable'
+  && one.changed_inputs.some((driver) =>
+    Math.abs(driver.amount) > 20 * Math.max(Math.abs(one.net_delta), 1000)));
+check('no single cause is reported as wildly larger than the change it explains',
+  absurd.length === 0,
+  absurd.map((one) => one.current.number).join(', ') || 'none');
+
+const separable = comparisons.filter((one) => one.attribution === 'separable');
+check('where causes are separable, they sum to the input-driven change',
+  separable.every((one) =>
+    Math.abs(one.changed_inputs.reduce((sum, driver) => sum + driver.amount, 0)
+      + one.net_interaction - one.net_from_inputs) < 0.02),
+  `${separable.length} of ${comparisons.length} separable`);
+
+// A rule edited between periods must land on the rule-change term, not be
+// blamed on the employee's attendance.
+const target = comparisons.find((one) => one.net_delta !== 0) ?? comparisons[0];
+const rulesNow = await call('GET', '/salary/rules');
+const pt = rulesNow.body.rows.find((rule) => rule.code === 'PT');
+const ptAsWritten = {
+  code: pt.code, name: pt.name, category_id: pt.category_id, sequence: pt.sequence,
+  computation_type: pt.computation_type, amount_fixed: pt.amount_fixed,
+  percentage: pt.percentage, percentage_base_code: pt.percentage_base_code,
+  formula_expression: pt.formula_expression, condition_type: pt.condition_type,
+  condition_expression: pt.condition_expression, appears_on_payslip: pt.appears_on_payslip,
+  is_active: pt.is_active,
+};
+await call('PATCH', `/salary/rules/${pt.id}`, { ...ptAsWritten, amount_fixed: 500 });
+
+const afterFlatEdit = await call('GET', `/payslips/${target.current.id}/compare`);
+// A flat rise hits both periods identically, so it explains none of the gap
+// between them. Zero is the right answer, and the decomposition must still close.
+check('a rule edit that hit both periods equally is charged to neither',
+  afterFlatEdit.body.net_from_rule_change === 0
+    && Math.abs(afterFlatEdit.body.net_from_inputs - afterFlatEdit.body.net_delta) < 0.02,
+  `rule change ${afterFlatEdit.body.net_from_rule_change}, inputs ${afterFlatEdit.body.net_from_inputs}, delta ${afterFlatEdit.body.net_delta}`);
+await call('PATCH', `/salary/rules/${pt.id}`, ptAsWritten);
+
+// One that does not hit both equally: lifting the provident fund cap changes
+// the deduction only where basic pay was high enough to reach it.
+const pfRule = rulesNow.body.rows.find((rule) => rule.code === 'PF');
+const pfAsWritten = {
+  code: pfRule.code, name: pfRule.name, category_id: pfRule.category_id, sequence: pfRule.sequence,
+  computation_type: pfRule.computation_type, amount_fixed: pfRule.amount_fixed,
+  percentage: pfRule.percentage, percentage_base_code: pfRule.percentage_base_code,
+  formula_expression: pfRule.formula_expression, condition_type: pfRule.condition_type,
+  condition_expression: pfRule.condition_expression, appears_on_payslip: pfRule.appears_on_payslip,
+  is_active: pfRule.is_active,
+};
+await call('PATCH', `/salary/rules/${pfRule.id}`, {
+  ...pfAsWritten, formula_expression: 'rules.BASIC * 0.12',
+});
+
+const uneven = [];
+for (const one of comparisons.slice(0, 12)) {
+  const again = await call('GET', `/payslips/${one.current.id}/compare`);
+  uneven.push(again.body);
+}
+check('a rule edit that hit the periods differently is charged to the rule',
+  uneven.some((one) => one.net_from_rule_change !== 0),
+  `${uneven.filter((one) => one.net_from_rule_change !== 0).length} of ${uneven.length} affected`);
+check('and the decomposition still accounts for the whole change',
+  uneven.every((one) =>
+    Math.abs((one.net_from_inputs + one.net_from_rule_change) - one.net_delta) < 0.02),
+  `${uneven.length} checked`);
+await call('PATCH', `/salary/rules/${pfRule.id}`, pfAsWritten);
+
+/*
+ * The payslip list only ever sorts newest-first, so scanning it finds nobody's
+ * first payslip -- by the latest period everyone has history. Go at it from the
+ * earliest payrun instead, where every payslip is somebody's first.
+ */
+if (firstEver === null) {
+  const allRuns = await call('GET', '/payruns?page_size=50');
+  const earliestRun = allRuns.body.rows
+    .reduce((oldest, run) => (run.period_start < oldest.period_start ? run : oldest));
+  const firstSlips = await call('GET', `/payslips?payrun_id=${earliestRun.id}&page_size=8`);
+  for (const row of firstSlips.body.rows ?? []) {
+    const result = await call('GET', `/payslips/${row.id}/compare`);
+    if (result.status === 200 && result.body.previous === null) {
+      firstEver = result.body;
+      break;
+    }
+  }
+}
+
+// An employee's first payslip has nothing behind it, and must say so rather
+// than compare itself with nothing and report the whole net as a pay rise.
+check("an employee's first payslip says there is nothing to compare it with",
+  firstEver !== null
+    && firstEver.unavailable !== null
+    && firstEver.net_delta === 0
+    && firstEver.changed_inputs.length === 0,
+  firstEver === null
+    ? 'no first payslip found in the sample'
+    : `${firstEver.current.number}: ${firstEver.unavailable}`);
+
+await call('POST', '/auth/login', {
+  email: 'employee@peoplepay360.local', password: 'Password123!',
+});
+const own = await call('GET', '/payslips?page_size=1');
+if (own.body.rows?.[0] !== undefined) {
+  const ownCompare = await call('GET', `/payslips/${own.body.rows[0].id}/compare`);
+  check('an employee can see why their own pay changed', ownCompare.status === 200,
+    `HTTP ${ownCompare.status}`);
+  const notTheirs = await call('GET', `/payslips/${target.current.id}/compare`);
+  check("and cannot see why anybody else's did",
+    notTheirs.status === 403 || notTheirs.status === 404, `HTTP ${notTheirs.status}`);
+}

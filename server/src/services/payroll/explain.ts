@@ -28,7 +28,8 @@ import { AppError, notFound } from '../../errors/app_error.ts';
 import { roundMoney } from '../../lib/money.ts';
 import { normaliseWage } from './contract_wage.ts';
 import { loadStructureRules } from './payslip_service.ts';
-import type { SalaryRuleDefinition } from './rule_engine.ts';
+import { bindPayslipContext } from './rule_engine.ts';
+import type { PayslipContext, SalaryRuleDefinition } from './rule_engine.ts';
 import { evaluateWithTrace } from './expression/evaluator.ts';
 import type { EvaluationRecord, ExpressionValue } from './expression/evaluator.ts';
 import type { Node } from './expression/parser.ts';
@@ -42,7 +43,7 @@ import type { ContextVariableName } from './context_variables.ts';
  * variable to the language without describing it here fails the build. A missing
  * description would otherwise surface as a raw dotted name on a payslip.
  */
-const VARIABLE_LABELS: Record<ContextVariableName, string> = {
+export const VARIABLE_LABELS: Record<ContextVariableName, string> = {
   'employee.seniority_years': 'Completed years of service',
   'contract.wage': 'Wage as written on the contract',
   'contract.hourly_wage': 'Wage per hour',
@@ -105,6 +106,8 @@ export type PayslipExplanation = {
   /** Set when the payslip cannot be explained at all, with the reason. */
   unavailable: string | null;
 };
+
+export { render as renderExpression };
 
 /** Renders an AST back to source text, parenthesising only where precedence needs it. */
 const PRECEDENCE: Record<string, number> = {
@@ -224,7 +227,7 @@ export function explainExpression(
   return { step: toStep(ast, record), value };
 }
 
-type StoredPayslip = {
+export type StoredPayslip = {
   id: number;
   salary_structure_id: number;
   period_start: string;
@@ -242,7 +245,7 @@ type StoredPayslip = {
   hours_per_week: number | null;
 };
 
-type StoredLine = {
+export type StoredLine = {
   rule_code: string;
   rule_name: string;
   category_code: string;
@@ -253,7 +256,7 @@ type StoredLine = {
 };
 
 /**
- * Rebuilds the variable bindings the rules saw, from the payslip's own columns.
+ * Rebuilds the context the rules saw, from the payslip's own columns.
  *
  * Two of the context's values are not columns because they are derivable from
  * ones that are: the payrun stores attended and paid leave added together as
@@ -265,10 +268,9 @@ type StoredLine = {
  * amount does. Get this wrong and the screen says the payslip does not
  * reproduce, loudly, instead of showing plausible arithmetic for a wrong number.
  */
-function bindingsFor(payslip: StoredPayslip): Map<string, number> {
+export function contextFor(payslip: StoredPayslip): PayslipContext {
   const hoursPerWeek = payslip.hours_per_week ?? 0;
   const wage = normaliseWage(payslip.wage ?? 0, payslip.wage_type ?? 'monthly', hoursPerWeek);
-  const attendedDays = payslip.worked_days - payslip.paid_leave_days;
 
   const [fromYear, fromMonth, fromDay] = payslip.hire_date.split('-').map(Number) as number[];
   const [toYear, toMonth, toDay] = payslip.period_end.split('-').map(Number) as number[];
@@ -282,22 +284,32 @@ function bindingsFor(payslip: StoredPayslip): Map<string, number> {
     Math.round((Date.parse(`${payslip.period_end}T00:00:00Z`)
       - Date.parse(`${payslip.period_start}T00:00:00Z`)) / 86_400_000) + 1;
 
-  return new Map<string, number>([
-    ['employee.seniority_years', Math.max(seniority, 0)],
-    ['contract.wage', wage.wage],
-    ['contract.monthly_wage', wage.monthly_wage],
-    ['contract.hourly_wage', wage.hourly_wage],
-    ['contract.schedule_hours_per_week', hoursPerWeek],
-    ['period.calendar_days', calendarDays],
-    ['worked.scheduled_days', payslip.scheduled_days],
-    ['worked.attended_days', attendedDays],
-    ['worked.paid_days', payslip.scheduled_days - payslip.unpaid_leave_days],
-    ['worked.paid_leave_days', payslip.paid_leave_days],
-    ['worked.unpaid_leave_days', payslip.unpaid_leave_days],
-    ['worked.worked_hours', payslip.worked_hours],
-    ['worked.overtime_hours', payslip.overtime_hours],
-    ['worked.proration_factor', payslip.proration_factor],
-  ]);
+  return {
+    employee: { id: 0, seniority_years: Math.max(seniority, 0) },
+    contract: { ...wage, schedule_hours_per_week: hoursPerWeek },
+    period: { calendar_days: calendarDays },
+    worked: {
+      scheduled_days: payslip.scheduled_days,
+      attended_days: payslip.worked_days - payslip.paid_leave_days,
+      paid_days: payslip.scheduled_days - payslip.unpaid_leave_days,
+      paid_leave_days: payslip.paid_leave_days,
+      unpaid_leave_days: payslip.unpaid_leave_days,
+      worked_hours: payslip.worked_hours,
+      overtime_hours: payslip.overtime_hours,
+      proration_factor: payslip.proration_factor,
+    },
+  };
+}
+
+/**
+ * The same context in the flat form a rule reads.
+ *
+ * Built by the engine's own binder rather than by a second list of names here.
+ * A hand-written copy would drift one variable at a time, and the symptom would
+ * be an explanation that silently omits whatever was added last.
+ */
+export function bindingsFor(payslip: StoredPayslip): Map<string, number> {
+  return bindPayslipContext(contextFor(payslip));
 }
 
 /** Recomputes one line and describes how it was arrived at. */

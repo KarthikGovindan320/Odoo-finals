@@ -978,3 +978,59 @@ a:hover { text-decoration: underline; }
 }
 .xcontext__label { font-size: var(--size-micro); color: var(--text-2); }
 .xcontext__name { font-family: var(--font-mono); font-size: 10px; color: var(--text-3); }
+
+/* ---------------------------------------------------------------------------
+   Period-over-period change
+   ---------------------------------------------------------------------------
+   Bars sit on a shared zero line down the middle of their track, so direction
+   is read from which side of the line a bar leaves rather than from its colour.
+
+   The obvious pair for gain and loss is the ledger's green and brick, and it is
+   the wrong one: measured, they separate by ΔE 3.0 under deuteranopia, which is
+   the classic red-green collision and means the most common form of colour
+   blindness sees one hue. The bars use the validated chart pair instead, which
+   clears every check at ΔE 18 protan.
+
+   Figures stay in ink with an explicit sign rather than taking the bar's colour.
+   Direction is then carried three times over -- side of the line, sign, and hue
+   -- and never by hue alone. */
+
+.delta__headline { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.delta__amount { font-family: var(--font-mono); font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.delta__amount--down, .delta__amount--up { color: var(--ink-800); }
+.delta__against { font-size: var(--size-xs); color: var(--text-3); }
+
+.delta__note { margin: 8px 0 0; font-size: var(--size-micro); color: var(--text-3); }
+.delta__plain { margin: 6px 0 0; padding-inline-start: 18px; font-size: var(--size-xs); color: var(--text-2); }
+.delta__plain li { margin-block: 2px; }
+
+.delta__bars { list-style: none; margin: 0; padding: 0; }
+.delta__row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 180px 132px;
+  gap: 12px; align-items: center; padding-block: 5px;
+  border-block-end: 1px solid var(--line-soft); font-size: var(--size-xs);
+}
+.delta__row:last-child { border-block-end: 0; }
+.delta__label { color: var(--text); overflow-wrap: anywhere; }
+.delta__detail { font-family: var(--font-mono); font-size: var(--size-micro); color: var(--text-3); }
+
+.delta__track { position: relative; height: 12px; background: var(--surface-2); border-radius: 2px; }
+/* The zero line the bars grow from, drawn rather than implied. */
+.delta__track::before {
+  content: ''; position: absolute; inset-block: -2px; left: 50%;
+  width: 1px; background: var(--line);
+}
+.delta__bar { position: absolute; inset-block: 1px; border-radius: 2px; min-width: 2px; }
+.delta__bar--down { background: var(--series-2); }
+.delta__bar--up { background: var(--series-1); }
+
+.delta__figure {
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+  text-align: right; font-weight: 600; color: var(--ink-800);
+}
+
+.linklike {
+  background: none; border: 0; padding: 0; font: inherit; color: var(--accent-ink);
+  text-decoration: underline; cursor: pointer;
+}
+.linklike:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

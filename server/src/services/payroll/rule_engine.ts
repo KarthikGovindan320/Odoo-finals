@@ -134,6 +134,14 @@ function bindContext(context: PayslipContext): Map<string, number> {
  */
 export const bindContextForTest = bindContext;
 
+/**
+ * The variable names and values a context supplies, for callers that need the
+ * flat form the evaluator sees -- explaining a stored payslip, or comparing two.
+ * Exported so there is one implementation of "what a rule can read" rather than
+ * one here and a hand-written copy elsewhere that drifts a variable at a time.
+ */
+export const bindPayslipContext = bindContext;
+
 function resolvePercentageBase(
   baseCode: string,
   ruleResults: Map<string, number>,

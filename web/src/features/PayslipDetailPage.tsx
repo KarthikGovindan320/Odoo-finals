@@ -15,6 +15,8 @@ import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.t
 import { Badge, DetailRow, PAYROLL_WORKFLOW, Panel, StatusBar } from '../components/Chrome.tsx';
 import { ExplanationContext, LineExplanation } from './PayslipExplain.tsx';
 import type { PayslipExplanation } from './PayslipExplain.tsx';
+import { PayslipComparison } from './PayslipComparison.tsx';
+import type { PayslipComparison as Comparison } from './PayslipComparison.tsx';
 
 
 type PayslipDetail = {
@@ -46,6 +48,14 @@ export function PayslipDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data, loading, error } = useResource<PayslipDetail>(`/payslips/${id}`);
+  /*
+   * Loaded with the page rather than on demand, unlike the line-by-line
+   * explanation. "Why is this different from last month" is the question people
+   * arrive with, so making them ask for it puts a click in front of the answer.
+   * The work is a handful of in-memory rule evaluations, no heavier than the
+   * page it sits on.
+   */
+  const comparison = useResource<Comparison>(`/payslips/${id}/compare`);
   const [pdfError, setPdfError] = useState<string | null>(null);
   const [openingPdf, setOpeningPdf] = useState(false);
 
@@ -124,6 +134,16 @@ export function PayslipDetailPage() {
       <Panel>
         <StatusBar steps={PAYROLL_WORKFLOW} current={data.state} />
       </Panel>
+
+      {comparison.data !== null && comparison.data.previous !== null && (
+        <Panel title="Change since the previous payslip">
+          <PayslipComparison
+            comparison={comparison.data}
+            currency={data.currency_code}
+            onOpenPrevious={(previousId) => navigate(`/payroll/payslips/${previousId}`)}
+          />
+        </Panel>
+      )}
 
       <div className="grid-2">
         <Panel title="Identification">
