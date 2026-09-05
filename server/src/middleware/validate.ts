@@ -45,23 +45,8 @@ export function validateBody<Output>(schema: ZodType<Output>): RequestHandler {
   };
 }
 
-export function validateQuery<Output>(schema: ZodType<Output>): RequestHandler {
-  return (request: Request, _response: Response, next: NextFunction): void => {
-    try {
-      // Express 5 makes req.query a getter, so the parsed result is stashed
-      // rather than assigned back over it.
-      Object.defineProperty(request, 'validatedQuery', {
-        value: parseOrThrow(schema, request.query),
-        configurable: true,
-        enumerable: false,
-      });
-      next();
-    } catch (error) {
-      next(error);
-    }
-  };
-}
-
-export function validatedQuery<Output>(request: Request): Output {
-  return (request as Request & { validatedQuery: Output }).validatedQuery;
-}
+// validateQuery/validatedQuery used to live here as middleware. Nothing ever
+// called them -- every route parses its own query with parseOrThrow, which reads
+// better at the call site because the parsed value is in scope immediately
+// rather than fetched back out of the request. Removed rather than left as two
+// exported functions nobody uses.

@@ -7,7 +7,7 @@
  * simply ignored, because there is no column to put it in.
  */
 import { notFound } from '../errors/app_error.ts';
-import { query, queryOne, withTransaction } from '../db/pool.ts';
+import { query, queryOne, withTransaction, insertedId } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
 import { workingScheduleInput } from '../../../shared/schemas/hr.ts';
@@ -37,9 +37,13 @@ schedules.get('/', 'schedule:read', async (_request, response) => {
 
 schedules.get('/:id', 'schedule:read', async (request, response) => {
   const id = parseOrThrow(identifier, request.params.id);
+  // employee_count used to be a literal 0 here, which the detail screen then
+  // displayed as fact. Either report the real number or do not claim one.
   const schedule = await queryOne<ScheduleRow>(
-    `SELECT id, name, schedule_type, timezone, hours_per_week, 0 AS employee_count
-       FROM working_schedules WHERE id = $1`,
+    `SELECT w.id, w.name, w.schedule_type, w.timezone, w.hours_per_week,
+            (SELECT count(*)::int FROM employees e WHERE e.working_schedule_id = w.id)
+              AS employee_count
+       FROM working_schedules w WHERE w.id = $1`,
     [id],
   );
   if (schedule === null) {
@@ -65,7 +69,7 @@ schedules.post('/', 'schedule:write', validateBody(workingScheduleInput), async 
        VALUES ($1, $2, $3) RETURNING id`,
       [input.name, input.schedule_type, input.timezone],
     );
-    const scheduleId = (created as { id: number }).id;
+    const scheduleId = insertedId(created, 'a working schedule');
 
     for (const line of input.lines) {
       await client.query(

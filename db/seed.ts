@@ -38,9 +38,6 @@ async function main(): Promise<void> {
     console.log('  employees and contracts ...');
     const { employees, contracts } = await seedPeople(client, reference, random, today);
 
-    const adminUser = await client.queryOne<{ id: number }>(
-      `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'admin'`,
-    );
     const hrUser = await client.queryOne<{ id: number }>(
       `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'hr_manager'`,
     );
@@ -78,7 +75,6 @@ async function main(): Promise<void> {
       `  ${payroll.payruns} payruns, ${payroll.payslips} payslips, ` +
         `net paid ${payroll.totalNet.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`,
     );
-    void adminUser;
   });
 
   console.log('');
