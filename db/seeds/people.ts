@@ -139,7 +139,10 @@ export async function seedPeople(
     const scheduleId = reference.scheduleIds[scheduleName] as number;
 
     // Hire dates spread over four years so seniority and contract history vary.
-    const hireDate = addMonths(today, -random.int(2, 48));
+    // The day is jittered as well as the month: without it every employee in the
+    // company appears to have been hired on the same day of the month, which is
+    // the kind of detail that makes seeded data look seeded.
+    const hireDate = addDays(addMonths(today, -random.int(2, 48)), random.int(-14, 13));
 
     let userId: number | null = null;
     if (demo !== undefined) {
