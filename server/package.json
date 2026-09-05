@@ -1,0 +1,17 @@
+{
+  "name": "@peoplepay/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --env-file-if-exists=../.env --watch src/index.ts",
+    "start": "node --env-file-if-exists=../.env src/index.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "nodemailer": "^7.0.3",
+    "pdfkit": "^0.17.1",
+    "pg": "^8.16.0",
+    "zod": "^4.0.5"
+  }
+}

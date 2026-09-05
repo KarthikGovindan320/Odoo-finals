@@ -1,0 +1,36 @@
+{
+  "name": "peoplepay360",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Integrated HR and payroll operations platform",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "db:migrate": "node --env-file-if-exists=.env db/migrate.ts",
+    "db:seed": "node --env-file-if-exists=.env db/seed.ts",
+    "db:reset": "node --env-file-if-exists=.env db/migrate.ts --reset && node --env-file-if-exists=.env db/seed.ts",
+    "dev:server": "npm --workspace server run dev",
+    "dev:web": "npm --workspace web run dev",
+    "test": "node --test \"server/test/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "verify:flows": "node scripts/verify_demo_flows.mjs"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.0",
+    "@types/nodemailer": "^7.0.0",
+    "@types/pdfkit": "^0.17.0",
+    "@types/pg": "^8.15.0",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "pg": "^8.16.0",
+    "zod": "^4.0.5"
+  }
+}

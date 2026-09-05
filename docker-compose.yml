@@ -1,0 +1,30 @@
+# Brings up everything the platform needs on one machine: the database and an
+# SMTP sink. Nothing here talks to a hosted service, so the whole system runs
+# with the network unplugged.
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: peoplepay360
+      POSTGRES_USER: peoplepay
+      POSTGRES_PASSWORD: peoplepay
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U peoplepay -d peoplepay360"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Captures every outbound payslip email and serves them at http://localhost:8025.
+  # Real SMTP, real attachments, no third-party mail provider.
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+volumes:
+  db_data:
