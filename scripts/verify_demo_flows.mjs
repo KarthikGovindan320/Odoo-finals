@@ -113,6 +113,26 @@ const sample = detail.body.payslips.find((p) => p.net_amount > 0);
 check('payslips carry real money', sample && sample.net_amount > 0,
   `${sample?.employee_name}: net ${sample?.net_amount}`);
 
+/*
+ * Not simply picked[0]. The rules a payslip is computed with come from the
+ * employee's own contract, not from the structure the payrun was created
+ * under -- an intern on a stipend contract gets STIPEND and INTERN_NET, which
+ * have no BASIC and no loss-of-pay rule at all. The unpaid-leave assertions
+ * in FLOW 2 are about the regular structure's LWP rule, so pick somebody
+ * the first payrun actually computed with it. Whoever sorts first is a
+ * property of the seed's random data, not of the thing being verified.
+ */
+let regularEmployee = picked[0];
+for (const slip of detail.body.payslips) {
+  const full = await call('GET', `/payslips/${slip.id}`);
+  if (full.body.lines?.some((line) => line.rule_code === 'BASIC')) {
+    regularEmployee = slip.employee_id;
+    break;
+  }
+}
+check('found an employee on the regular structure to follow through payroll',
+  regularEmployee !== undefined, `employee ${regularEmployee}`);
+
 const validated = await call('POST', `/payruns/${payrunId}/validate`);
 check('validate succeeds once computed', validated.status === 200, `${validated.body.validated} payslips`);
 
@@ -135,7 +155,7 @@ check('bulk email attempts every payslip', sent.status === 200,
 console.log('\n=== FLOW 2: allocation -> request -> approved -> payroll ===');
 await call('POST', '/auth/login', { email: 'hr.manager@peoplepay360.local', password: 'Password123!' });
 
-const employee = picked[0];
+const employee = regularEmployee;
 const types = await call('GET', '/time-off/types');
 const unpaid = types.body.rows.find((t) => t.code === 'UNPAID');
 const paidType = types.body.rows.find((t) => t.code === 'PAID');
