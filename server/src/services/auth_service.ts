@@ -26,6 +26,13 @@ export type AuthenticatedUser = {
   email: string;
   roleCode: string;
   roleName: string;
+  /**
+   * Seniority, carried on the session so an authority check costs no query.
+   *
+   * Permissions decide what this user may do; this decides who they may do it
+   * to. See requireAuthorityOver() in middleware/authorize.ts.
+   */
+  roleRank: number;
   employeeId: number | null;
   employeeName: string | null;
   /** permission code -> the widest scope this role holds for it. */
@@ -44,6 +51,7 @@ type UserRow = {
   is_active: boolean;
   role_code: string;
   role_name: string;
+  role_rank: number;
   employee_id: number | null;
   employee_name: string | null;
 };
@@ -74,7 +82,7 @@ export async function login(
 ): Promise<{ token: string; user: AuthenticatedUser }> {
   const user = await queryOne<UserRow & { permissions: unknown }>(
     `SELECT u.id, u.email, u.password_hash, u.password_salt, u.is_active,
-            r.code AS role_code, r.name AS role_name,
+            r.code AS role_code, r.name AS role_name, r.rank AS role_rank,
             e.id   AS employee_id,
             e.first_name || ' ' || e.last_name AS employee_name,
             ${PERMISSIONS_SUBQUERY}
@@ -133,6 +141,7 @@ export async function login(
       email: user.email,
       roleCode: user.role_code,
       roleName: user.role_name,
+      roleRank: user.role_rank,
       employeeId: user.employee_id,
       employeeName: user.employee_name,
       permissions: toPermissionMap(user.permissions),
@@ -146,11 +155,13 @@ export async function resolveSession(token: string): Promise<AuthenticatedUser |
     email: string;
     role_code: string;
     role_name: string;
+    role_rank: number;
     employee_id: number | null;
     employee_name: string | null;
     permissions: unknown;
   }>(
     `SELECT u.id AS user_id, u.email, r.code AS role_code, r.name AS role_name,
+            r.rank AS role_rank,
             e.id AS employee_id,
             e.first_name || ' ' || e.last_name AS employee_name,
             ${PERMISSIONS_SUBQUERY}
@@ -174,6 +185,7 @@ export async function resolveSession(token: string): Promise<AuthenticatedUser |
     email: row.email,
     roleCode: row.role_code,
     roleName: row.role_name,
+    roleRank: row.role_rank,
     employeeId: row.employee_id,
     employeeName: row.employee_name,
     permissions: toPermissionMap(row.permissions),

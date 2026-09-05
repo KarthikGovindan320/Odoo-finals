@@ -19,10 +19,12 @@ import { AppError, forbidden, notFound, workflowViolation } from '../errors/app_
 import { query, queryOne, withTransaction, insertedId } from '../db/pool.ts';
 import type { QueryParameter } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
-import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
+import {
+  requireAuthorityOver, requireOwnEmployee, scopedEmployeeId,
+} from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
 import { assertExportable, sendSheet } from '../export/respond.ts';
-import { attendanceInput } from '../../../shared/schemas/hr.ts';
+import { attendanceInput, attendanceVoidInput } from '../../../shared/schemas/hr.ts';
 import {
   exportFormat, identifier, isoDate, paginationQuery,
 } from '../../../shared/schemas/common.ts';
@@ -39,6 +41,17 @@ type AttendanceRow = {
   is_manually_edited: boolean;
   edit_reason: string | null;
   edited_by: string | null;
+  voided_at: string | null;
+  void_reason: string | null;
+  voided_by: string | null;
+  /**
+   * Whether this caller outranks this record's employee.
+   *
+   * Computed here rather than left to the client to work out from a rank it
+   * would have to be sent anyway. One implementation of the rule, and the
+   * screen cannot offer a button the server is going to refuse.
+   */
+  can_manage: boolean;
 };
 
 const listQuery = paginationQuery.safeExtend({
@@ -52,6 +65,19 @@ const listQuery = paginationQuery.safeExtend({
 const exportQuery = listQuery.omit({ page: true, page_size: true }).extend({
   format: exportFormat,
 });
+
+/** One shape for a record wherever a single one is returned. */
+const RECORD_SELECT = `SELECT a.id, a.employee_id,
+          e.first_name || ' ' || e.last_name AS employee_name,
+          a.check_in, a.check_out, a.worked_hours, a.status,
+          a.is_manually_edited, a.edit_reason, a.edited_at,
+          a.voided_at, a.void_reason,
+          editor.email AS edited_by,
+          voider.email AS voided_by
+     FROM attendance_records a
+     JOIN employees e ON e.id = a.employee_id
+     LEFT JOIN users editor ON editor.id = a.edited_by_user_id
+     LEFT JOIN users voider ON voider.id = a.voided_by_user_id`;
 
 const attendance = createGuardedRouter();
 
@@ -107,14 +133,25 @@ attendance.get('/', 'attendance:read', async (request, response) => {
             e.first_name || ' ' || e.last_name AS employee_name,
             a.check_in, a.check_out, a.worked_hours, a.status,
             a.is_manually_edited, a.edit_reason,
-            u.email AS edited_by
+            a.voided_at, a.void_reason,
+            u.email AS edited_by,
+            voider.email AS voided_by,
+            COALESCE(subject_role.rank, 0) < $${params.length + 1} AS can_manage
        FROM attendance_records a
        JOIN employees e ON e.id = a.employee_id
        LEFT JOIN users u ON u.id = a.edited_by_user_id
+       LEFT JOIN users voider ON voider.id = a.voided_by_user_id
+       LEFT JOIN users subject      ON subject.id = e.user_id
+       LEFT JOIN roles subject_role ON subject_role.id = subject.role_id
       WHERE ${where}
       ORDER BY a.check_in DESC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-    [...params, filters.page_size, (filters.page - 1) * filters.page_size],
+      LIMIT $${params.length + 2} OFFSET $${params.length + 3}`,
+    [
+      ...params,
+      request.auth?.roleRank ?? 0,
+      filters.page_size,
+      (filters.page - 1) * filters.page_size,
+    ],
   );
 
   response.json({
@@ -140,11 +177,14 @@ attendance.get('/export', 'attendance:read', async (request, response) => {
             d.name AS department_name,
             a.check_in, a.check_out, a.worked_hours, a.status,
             a.is_manually_edited, a.edit_reason,
-            u.email AS edited_by
+            a.voided_at, a.void_reason,
+            u.email AS edited_by,
+            voider.email AS voided_by
        FROM attendance_records a
        JOIN employees e ON e.id = a.employee_id
        LEFT JOIN departments d ON d.id = e.department_id
        LEFT JOIN users u ON u.id = a.edited_by_user_id
+       LEFT JOIN users voider ON voider.id = a.voided_by_user_id
       WHERE ${where}
       ORDER BY a.check_in DESC`,
     params,
@@ -182,6 +222,13 @@ attendance.get('/export', 'attendance:read', async (request, response) => {
       { header: 'Manually edited', value: (row) => (row.is_manually_edited ? 'Yes' : 'No') },
       { header: 'Edit reason', value: (row) => row.edit_reason },
       { header: 'Edited by', value: (row) => row.edited_by },
+      // Voided rows are exported rather than dropped. A file that silently
+      // omits them cannot be reconciled against one that shows them, and
+      // "why is this record missing" is a worse question than "why is this
+      // record marked invalid".
+      { header: 'Invalidated', value: (row) => (row.voided_at === null ? 'No' : 'Yes') },
+      { header: 'Invalidation reason', value: (row) => row.void_reason },
+      { header: 'Invalidated by', value: (row) => row.voided_by },
     ],
   }, filters.format);
 });
@@ -302,12 +349,23 @@ attendance.patch('/:id', 'attendance:correct', validateBody(attendanceInput), as
     );
   }
 
-  const existing = await queryOne<{ id: number }>(
-    'SELECT id FROM attendance_records WHERE id = $1',
+  const existing = await queryOne<{ employee_id: number; voided_at: string | null }>(
+    'SELECT employee_id, voided_at FROM attendance_records WHERE id = $1',
     [id],
   );
   if (existing === null) {
     throw notFound('Attendance record', id);
+  }
+  await requireAuthorityOver(request, existing.employee_id, 'correct attendance');
+
+  // Correcting the times on a record that has been declared not to have
+  // happened is an incoherent thing to ask for: restore it first, and then the
+  // correction is about a record that exists.
+  if (existing.voided_at !== null) {
+    throw workflowViolation(
+      'This record has been invalidated, so its times cannot be corrected. '
+        + 'Restore it first if it did happen after all.',
+    );
   }
 
   await withTransaction(async (client) => {
@@ -330,6 +388,89 @@ attendance.patch('/:id', 'attendance:correct', validateBody(attendanceInput), as
   }, request.auth?.userId);
 
   response.json(await queryOne('SELECT * FROM attendance_records WHERE id = $1', [id]));
+});
+
+/**
+ * Declaring that a record did not happen.
+ *
+ * Distinct from correcting one, and the distinction is the point. A correction
+ * says "this happened, at a different time"; an invalidation says "this did not
+ * happen" -- a duplicate punch, a reader misfire, a record entered against the
+ * wrong person. The only way to express the second used to be editing the times
+ * into something meaningless, which leaves a record that still counts towards
+ * payroll and still appears in every total.
+ *
+ * The row stays. Payroll computed against it, the audit log points at it, and
+ * "voided by Priya on the 3rd, duplicate of the 09:02 punch" is the answer to
+ * the question somebody will eventually ask. A DELETE answers nothing.
+ */
+attendance.post('/:id/void', 'attendance:correct', validateBody(attendanceVoidInput), async (request, response) => {
+  const id = parseOrThrow(identifier, request.params.id);
+  const input = request.body as typeof attendanceVoidInput._output;
+
+  const existing = await queryOne<{ employee_id: number; voided_at: string | null }>(
+    'SELECT employee_id, voided_at FROM attendance_records WHERE id = $1',
+    [id],
+  );
+  if (existing === null) {
+    throw notFound('Attendance record', id);
+  }
+  await requireAuthorityOver(request, existing.employee_id, 'invalidate attendance');
+
+  if (existing.voided_at !== null) {
+    throw workflowViolation('This record has already been invalidated.');
+  }
+
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE attendance_records
+          SET voided_at = now(), voided_by_user_id = $2, void_reason = $3
+        WHERE id = $1`,
+      [id, request.auth?.userId ?? null, input.reason],
+    );
+  }, request.auth?.userId);
+
+  response.json(await queryOne(`${RECORD_SELECT} WHERE a.id = $1`, [id]));
+});
+
+/**
+ * Putting back a record that was invalidated by mistake.
+ *
+ * A void is a judgement, and judgements are sometimes wrong. Making it
+ * irreversible would mean the only repair for a mistaken void is entering a new
+ * record that claims to be the original and is not -- so this exists, it needs
+ * the same seniority, and both the void and the restore are in the audit log.
+ *
+ * It can fail: the overlap constraint ignores voided records, so the slot this
+ * one occupied may have been filled since. The database says so, and that is
+ * the right answer -- the two records cannot both be true.
+ */
+attendance.post('/:id/restore', 'attendance:correct', async (request, response) => {
+  const id = parseOrThrow(identifier, request.params.id);
+
+  const existing = await queryOne<{ employee_id: number; voided_at: string | null }>(
+    'SELECT employee_id, voided_at FROM attendance_records WHERE id = $1',
+    [id],
+  );
+  if (existing === null) {
+    throw notFound('Attendance record', id);
+  }
+  await requireAuthorityOver(request, existing.employee_id, 'restore attendance');
+
+  if (existing.voided_at === null) {
+    throw workflowViolation('This record is not invalidated, so there is nothing to restore.');
+  }
+
+  await withTransaction(async (client) => {
+    await client.query(
+      `UPDATE attendance_records
+          SET voided_at = NULL, voided_by_user_id = NULL, void_reason = NULL
+        WHERE id = $1`,
+      [id],
+    );
+  }, request.auth?.userId);
+
+  response.json(await queryOne(`${RECORD_SELECT} WHERE a.id = $1`, [id]));
 });
 
 export const attendanceRouter = attendance.router;

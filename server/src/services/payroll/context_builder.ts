@@ -205,6 +205,7 @@ export async function buildWorkedSummary(
             SUM(COALESCE(worked_hours, 0))         AS worked_hours
        FROM attendance_records
       WHERE employee_id = $1
+        AND voided_at IS NULL
         AND (check_in AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date
       GROUP BY 1`,
     [input.employeeId, contractStart, contractEnd, TENANT_TIMEZONE],

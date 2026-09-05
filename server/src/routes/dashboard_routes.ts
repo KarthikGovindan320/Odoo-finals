@@ -127,7 +127,8 @@ dashboard.get('/', 'dashboard:read', async (request, response) => {
                 COALESCE(ROUND(SUM(a.worked_hours), 1), 0)               AS total_hours
            FROM attendance_records a
            JOIN employees e ON e.id = a.employee_id
-          WHERE (a.check_in AT TIME ZONE $5)::date BETWEEN $1::date AND $2::date
+          WHERE a.voided_at IS NULL
+            AND (a.check_in AT TIME ZONE $5)::date BETWEEN $1::date AND $2::date
             AND ($3::int IS NULL OR e.department_id = $3::int)
             AND ($4::int IS NULL OR e.employment_type_id = $4::int)`,
         [...scope, TENANT_TIMEZONE],

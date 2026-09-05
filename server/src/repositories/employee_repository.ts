@@ -156,7 +156,8 @@ export async function findEmployee(id: number): Promise<EmployeeDetail | null> {
             cc.wage AS current_wage,
             cc.wage_type AS current_wage_type,
             (SELECT count(*)::int FROM contracts            WHERE employee_id = e.id) AS contract_count,
-            (SELECT count(*)::int FROM attendance_records   WHERE employee_id = e.id) AS attendance_count,
+            (SELECT count(*)::int FROM attendance_records
+              WHERE employee_id = e.id AND voided_at IS NULL)             AS attendance_count,
             (SELECT count(*)::int FROM time_off_requests    WHERE employee_id = e.id) AS time_off_count,
             (SELECT count(*)::int FROM time_off_allocations WHERE employee_id = e.id) AS allocation_count,
             (SELECT count(*)::int FROM payslips             WHERE employee_id = e.id) AS payslip_count

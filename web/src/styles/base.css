@@ -1180,3 +1180,6 @@ a:hover { text-decoration: underline; }
   font-size: var(--size-micro); color: var(--brick-ink); font-weight: 500;
   max-width: 34ch;
 }
+
+/* An invalidated attendance record: kept, struck through, and quiet. */
+.voided { color: var(--text-3); text-decoration-color: var(--brick); }

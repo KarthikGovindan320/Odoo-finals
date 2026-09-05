@@ -221,6 +221,7 @@ export async function collectContextWarnings(
     `SELECT count(*)::int AS total
        FROM attendance_records
       WHERE employee_id = $1
+        AND voided_at IS NULL
         AND check_out IS NULL
         AND (check_in AT TIME ZONE $4)::date BETWEEN $2::date AND $3::date`,
     [input.employeeId, input.periodStart, input.periodEnd, TENANT_TIMEZONE],

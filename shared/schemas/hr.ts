@@ -217,3 +217,20 @@ export type WorkingScheduleInput = z.infer<typeof workingScheduleInput>;
 export type AttendanceInput = z.infer<typeof attendanceInput>;
 export type TimeOffRequestInput = z.infer<typeof timeOffRequestInput>;
 export type TimeOffAllocationInput = z.infer<typeof timeOffAllocationInput>;
+
+/**
+ * Invalidating an attendance record.
+ *
+ * The reason is required and has a floor on its length, because "wrong" is not
+ * an audit trail. Whoever reads this in six months needs to know which punch it
+ * duplicated or which reader misfired, and the only moment anybody knows that
+ * is the moment they press the button.
+ */
+export const attendanceVoidInput = z.object({
+  reason: requiredText('Reason', 300).refine(
+    (value) => value.trim().length >= 8,
+    'Say what was wrong with this record — a few words, not one.',
+  ),
+});
+
+export type AttendanceVoidInput = z.infer<typeof attendanceVoidInput>;

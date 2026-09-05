@@ -7,7 +7,7 @@
  */
 import { useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
-import type { FormEvent } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
 import { useResource, type Page } from '../lib/use_resource.ts';
@@ -18,6 +18,7 @@ import { DataTable, Pagination, type Column } from '../components/DataTable.tsx'
 import { TextAreaField, TextField } from '../components/Field.tsx';
 import { fromLocalInput, toLocalInput, todayInTenantZone } from '../lib/timezone.ts';
 import { Icon } from '../components/Icon.tsx';
+import { EmployeePicker } from '../components/EmployeePicker.tsx';
 import { ExportButtons } from '../components/ExportButtons.tsx';
 
 type AttendanceRow = {
@@ -25,6 +26,9 @@ type AttendanceRow = {
   check_in: string; check_out: string | null; worked_hours: number | null;
   status: string; is_manually_edited: boolean;
   edit_reason: string | null; edited_by: string | null;
+  voided_at: string | null; void_reason: string | null; voided_by: string | null;
+  /** Whether this viewer outranks this record's employee. Decided by the server. */
+  can_manage: boolean;
 };
 
 export function AttendancePage() {
@@ -37,39 +41,100 @@ export function AttendancePage() {
   const [to, setTo] = useState('');
   const [page, setPage] = useState(1);
   const [correcting, setCorrecting] = useState<AttendanceRow | null>(null);
+  const [voiding, setVoiding] = useState<AttendanceRow | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [busy, setBusy] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const restore = (row: AttendanceRow): void => {
+    setBusy(row.id);
+    setActionError(null);
+    void api.post(`/attendance/${row.id}/restore`)
+      .then(() => reload())
+      .catch((caught: unknown) =>
+        setActionError(caught instanceof ApiError || caught instanceof Error
+          ? caught.message
+          : 'The record could not be restored.'))
+      .finally(() => setBusy(null));
+  };
 
   const path = `/attendance${queryString({
     employee_id: employeeFilter, status, from, to, page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<AttendanceRow>>(path);
 
+  /*
+   * Voided rows are struck through rather than hidden. Removing them from the
+   * list would make an invalidation indistinguishable from a record that never
+   * existed, and the whole point of keeping the row is that somebody can see
+   * what was decided and why.
+   */
+  const struck = (row: AttendanceRow, content: ReactNode): ReactNode =>
+    row.voided_at === null ? content : <s className="voided">{content}</s>;
+
   const columns: Array<Column<AttendanceRow>> = [
     { key: 'employee', header: 'Employee',
       render: (row) => <span style={{ fontWeight: 600 }}>{row.employee_name}</span> },
     { key: 'date', header: 'Date',
-      render: (row) => formatDateTime(row.check_in).split(',')[0] },
-    { key: 'check_in', header: 'Check in', render: (row) => formatTime(row.check_in) },
+      render: (row) => struck(row, formatDateTime(row.check_in).split(',')[0]) },
+    { key: 'check_in', header: 'Check in', render: (row) => struck(row, formatTime(row.check_in)) },
     { key: 'check_out', header: 'Check out',
       render: (row) => row.check_out === null
         ? <Badge variant="warning">Never checked out</Badge>
-        : formatTime(row.check_out) },
+        : struck(row, formatTime(row.check_out)) },
     { key: 'worked_hours', header: 'Worked hours', numeric: true,
-      render: (row) => row.worked_hours === null ? '—' : `${Number(row.worked_hours).toFixed(2)} h` },
+      render: (row) => row.worked_hours === null
+        ? '—'
+        : struck(row, `${Number(row.worked_hours).toFixed(2)} h`) },
     { key: 'status', header: 'Status',
-      render: (row) => <Badge variant={stateVariant(row.status)}>{humanize(row.status)}</Badge> },
-    { key: 'edited', header: 'Correction',
-      render: (row) => row.is_manually_edited
-        ? <span title={row.edit_reason ?? ''}>
-            <Badge variant="info">Edited</Badge>
-            <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{row.edited_by}</span>
-          </span>
-        : <span className="muted">—</span> },
+      render: (row) => row.voided_at !== null
+        ? <Badge variant="danger">Invalidated</Badge>
+        : <Badge variant={stateVariant(row.status)}>{humanize(row.status)}</Badge> },
+    { key: 'edited', header: 'Note',
+      render: (row) => {
+        if (row.voided_at !== null) {
+          return (
+            <span title={row.void_reason ?? ''}>
+              <span className="muted" style={{ fontSize: 11 }}>
+                {row.void_reason} · {row.voided_by}
+              </span>
+            </span>
+          );
+        }
+        return row.is_manually_edited
+          ? <span title={row.edit_reason ?? ''}>
+              <Badge variant="info">Edited</Badge>
+              <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>{row.edited_by}</span>
+            </span>
+          : <span className="muted">—</span>;
+      } },
     ...(can('attendance:correct')
       ? [{
           key: 'actions', header: '', numeric: true,
-          render: (row: AttendanceRow) => (
-            <button className="btn btn--sm" onClick={() => setCorrecting(row)}>Correct</button>
-          ),
+          render: (row: AttendanceRow) => {
+            // Nothing offered on a record this viewer does not outrank. The
+            // server refuses it either way; showing the button and then the
+            // refusal is a worse way to learn the same thing.
+            if (!row.can_manage) {
+              return <span className="muted" style={{ fontSize: 11 }}>Not yours to change</span>;
+            }
+            if (row.voided_at !== null) {
+              return (
+                <button className="btn btn--sm" disabled={busy === row.id}
+                  onClick={() => restore(row)}>
+                  {busy === row.id ? 'Restoring…' : 'Restore'}
+                </button>
+              );
+            }
+            return (
+              <span style={{ display: 'inline-flex', gap: 6 }}>
+                <button className="btn btn--sm" onClick={() => setCorrecting(row)}>Correct</button>
+                <button className="btn btn--sm btn--danger" onClick={() => setVoiding(row)}>
+                  Invalidate
+                </button>
+              </span>
+            );
+          },
         }]
       : []),
   ];
@@ -84,7 +149,20 @@ export function AttendancePage() {
             check-in and check-out, so they cannot disagree with them.
           </span>
         </div>
+        {/* Recording on somebody else's behalf: a day the reader missed, a site
+            with no reader, a person who forgot. Under attendance:correct rather
+            than attendance:write, because everyone holds the latter for their
+            own punches. */}
+        {can('attendance:correct') && (
+          <div className="page__actions">
+            <button className="btn btn--primary" onClick={() => setRecording(true)}>
+              Record for an employee
+            </button>
+          </div>
+        )}
       </div>
+
+      {actionError !== null && <div className="error-box" role="alert">{actionError}</div>}
 
       {/* Self-service punching. The API, the attendance:write permission and the
           "today only" rule behind it all existed; there was simply no control
@@ -142,6 +220,21 @@ export function AttendancePage() {
           total={data?.total ?? 0} onPageChange={setPage} />
       </Panel>
 
+      {voiding !== null && (
+        <VoidModal
+          record={voiding}
+          onClose={() => setVoiding(null)}
+          onSaved={() => { setVoiding(null); reload(); }}
+        />
+      )}
+
+      {recording && (
+        <ProxyEntryModal
+          onClose={() => setRecording(false)}
+          onSaved={() => { setRecording(false); reload(); }}
+        />
+      )}
+
       {correcting !== null && (
         <CorrectionModal
           record={correcting}
@@ -150,6 +243,162 @@ export function AttendancePage() {
         />
       )}
     </>
+  );
+}
+
+/**
+ * Declaring that a record did not happen.
+ *
+ * A separate control from Correct, and deliberately worded as a different act.
+ * "This did not happen" and "this happened at a different time" are answers to
+ * different questions, and the interface offered only the second -- so a
+ * duplicate punch had to be edited into something meaningless, which leaves a
+ * record that still counts.
+ *
+ * The reason is required and the button says what it will do, because this is
+ * the control that removes hours from somebody's pay.
+ */
+function VoidModal({
+  record, onClose, onSaved,
+}: {
+  record: AttendanceRow;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = (event: FormEvent): void => {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    void api.post(`/attendance/${record.id}/void`, { reason })
+      .then(onSaved)
+      .catch((caught: unknown) =>
+        setError(caught instanceof ApiError || caught instanceof Error
+          ? caught.message
+          : 'The record could not be invalidated.'))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <Modal
+      title={`Invalidate attendance — ${record.employee_name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn btn--danger" onClick={submit} disabled={saving || reason.trim().length < 8}>
+            {saving ? 'Invalidating…' : 'Invalidate this record'}
+          </button>
+        </>
+      }
+    >
+      <form onSubmit={submit}>
+        {error !== null && <div className="error-box" role="alert">{error}</div>}
+
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          {formatDateTime(record.check_in)}
+          {record.check_out !== null && ` → ${formatTime(record.check_out)}`}
+          {record.worked_hours !== null && ` · ${Number(record.worked_hours).toFixed(2)} h`}
+        </p>
+        <p style={{ fontSize: 13 }}>
+          The record is kept and shown struck through, and stops counting towards worked hours,
+          payroll and every total. It can be restored if this turns out to be wrong.
+        </p>
+
+        <TextAreaField
+          label="Why is this record invalid?"
+          required
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          hint="A duplicate of which punch, which reader misfired, whose record it should have been."
+        />
+      </form>
+    </Modal>
+  );
+}
+
+/**
+ * Recording attendance on somebody else's behalf.
+ *
+ * The endpoint already accepted this -- attendance:correct has always been
+ * allowed to enter a record for another employee on a past date -- but the only
+ * way to reach it was the API. Which employee is offered is bounded by the
+ * server, not here: a request for somebody at or above the caller's own level is
+ * refused, and the refusal says so.
+ */
+function ProxyEntryModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [employeeId, setEmployeeId] = useState('');
+  const [checkIn, setCheckIn] = useState('');
+  const [checkOut, setCheckOut] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = (event: FormEvent): void => {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+    void api.post('/attendance', {
+      employee_id: Number(employeeId),
+      check_in: fromLocalInput(checkIn),
+      // An open record is a legitimate thing to enter: somebody checked in and
+      // the day is not over, or the check-out genuinely is not known yet.
+      check_out: checkOut === '' ? null : fromLocalInput(checkOut),
+    })
+      .then(onSaved)
+      .catch((caught: unknown) =>
+        setError(caught instanceof ApiError || caught instanceof Error
+          ? caught.message
+          : 'The record could not be saved.'))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <Modal
+      title="Record attendance for an employee"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn btn--primary" onClick={submit}
+            disabled={saving || employeeId === '' || checkIn === ''}>
+            {saving ? 'Saving…' : 'Save record'}
+          </button>
+        </>
+      }
+    >
+      <form onSubmit={submit}>
+        {error !== null && <div className="error-box" role="alert">{error}</div>}
+
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          For a day the reader missed, a site without one, or somebody who forgot. The record is
+          entered against your account and appears in the audit trail.
+        </p>
+
+        <EmployeePicker
+          label="Employee"
+          required
+          value={employeeId}
+          onChange={setEmployeeId}
+        />
+        <TextField
+          label="Check in"
+          type="datetime-local"
+          required
+          value={checkIn}
+          onChange={(event) => setCheckIn(event.target.value)}
+        />
+        <TextField
+          label="Check out"
+          type="datetime-local"
+          value={checkOut}
+          onChange={(event) => setCheckOut(event.target.value)}
+          hint="Leave empty if the day is still open."
+        />
+      </form>
+    </Modal>
   );
 }
 
@@ -313,9 +562,8 @@ function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: 
         onClick={() => void toggle()}
       >
         <Icon name="fingerprint" />
-        Biometric Attendance
         <span className="punch__toggle-state">
-          {busy ? '…' : on ? 'On' : 'Off'}
+          {busy ? '…' : on ? 'Check in' : 'Check out'}
         </span>
       </button>
 
