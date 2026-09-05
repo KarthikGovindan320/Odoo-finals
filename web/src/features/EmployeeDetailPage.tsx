@@ -4,6 +4,12 @@
  * Smart buttons carry counts and open the related list already filtered to this
  * employee, which is what turns six modules into one system. The counts come back
  * with the record in a single request rather than six.
+ *
+ * Also serves as an employee's own profile, reached at /profile with the id
+ * supplied rather than read from the URL. The screen is the same either way --
+ * the record does not become a different thing because the person reading it is
+ * its subject -- but the return-to-list control is not offered to somebody who
+ * never came from a list.
  */
 import { useState } from 'react';
 import { useParams } from 'react-router';
@@ -36,8 +42,10 @@ type Balance = {
   allocated: number; taken: number; remaining: number;
 };
 
-export function EmployeeDetailPage() {
-  const { id } = useParams();
+export function EmployeeDetailPage({ employeeId }: { employeeId?: number }) {
+  const { id: idFromRoute } = useParams();
+  const id = employeeId ?? idFromRoute;
+  const ownProfile = employeeId !== undefined;
   const backToList = useBackTo('/employees');
   const { can } = useAuth();
   const [editing, setEditing] = useState(false);
@@ -164,7 +172,12 @@ export function EmployeeDetailPage() {
         )}
       </Panel>
 
-      <button className="btn" onClick={backToList}>← Back to employees</button>
+      {/* Nothing to go back to when this is the profile: it is where the
+          session starts, and a control that returns you to where you already
+          are is worse than no control. */}
+      {!ownProfile && (
+        <button className="btn" onClick={backToList}>← Back to employees</button>
+      )}
 
       {editing && (
         <EmployeeFormModal

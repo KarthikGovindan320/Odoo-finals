@@ -14,13 +14,14 @@ import { Link, useLocation } from 'react-router';
  * routes, so linking them landed the user on the 404 page.
  */
 const LINKABLE_PATHS = new Set([
-  '/dashboard', '/employees', '/contracts', '/working-schedules',
+  '/dashboard', '/employees', '/profile', '/contracts', '/working-schedules',
   '/attendance', '/time-off', '/payroll', '/salary-config',
 ]);
 
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: 'Reports',
   employees: 'Employees',
+  profile: 'Profile',
   contracts: 'Contracts',
   'working-schedules': 'Working Schedules',
   attendance: 'Attendance',

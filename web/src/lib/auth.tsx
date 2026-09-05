@@ -30,6 +30,16 @@ type AuthState = {
   signOut(): Promise<void>;
   can(permission: string): boolean;
   scopeOf(permission: string): AccessScope | null;
+  /**
+   * True only between signing in and the shell acting on it.
+   *
+   * The distinction that makes this necessary: restoring a session on page
+   * refresh and signing in both take `user` from null to a value, and only one
+   * of them should move you. Without it, refreshing a payslip URL bounces you to
+   * the dashboard, and reload becomes a control that loses your place.
+   */
+  arrivedBySignIn: boolean;
+  clearArrival(): void;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -37,6 +47,7 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [arrivedBySignIn, setArrivedBySignIn] = useState(false);
 
   useEffect(() => {
     api
@@ -66,6 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signIn = useCallback(async (email: string, password: string) => {
     const response = await api.post<{ user: CurrentUser }>('/auth/login', { email, password });
     setUser(response.user);
+    setArrivedBySignIn(true);
     markSessionEstablished(true);
   }, []);
 
@@ -78,8 +90,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // control whose whole purpose is to end the session.
       markSessionEstablished(false);
       setUser(null);
+      setArrivedBySignIn(false);
     }
   }, []);
+
+  const clearArrival = useCallback(() => setArrivedBySignIn(false), []);
 
   const value = useMemo<AuthState>(
     () => ({
@@ -89,8 +104,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut,
       can: (permission) => user !== null && permission in user.permissions,
       scopeOf: (permission) => user?.permissions[permission] ?? null,
+      arrivedBySignIn,
+      clearArrival,
     }),
-    [user, loading, signIn, signOut],
+    [user, loading, signIn, signOut, arrivedBySignIn, clearArrival],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
