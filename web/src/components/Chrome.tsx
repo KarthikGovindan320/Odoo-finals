@@ -6,7 +6,7 @@
  * These three are what make separate modules feel like one system rather than
  * three screens behind three menu items.
  */
-import { useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 
@@ -123,7 +123,9 @@ export function Panel({ title, actions, children, flush }: PanelProps) {
     <section className="panel">
       {(title !== undefined || actions !== undefined) && (
         <header className="panel__header">
-          <h2 className="panel__title">{title}</h2>
+          {/* Rendered only when there is something to say. An <h2></h2> with no
+              text put an empty heading into the document outline. */}
+          {title !== undefined && <h2 className="panel__title">{title}</h2>}
           {actions}
         </header>
       )}
@@ -144,21 +146,90 @@ type ModalProps = {
   wide?: boolean;
 };
 
+/**
+ * A dialog that behaves like one.
+ *
+ * role="dialog" and aria-modal were already set, but none of what they promise
+ * was implemented: Escape did nothing, focus was never moved in or restored on
+ * close, Tab walked straight out into the page behind, and the body kept
+ * scrolling. Every create and edit flow in the application runs through here.
+ */
 export function Modal({ title, onClose, footer, children, wide }: ModalProps) {
+  const titleId = useId();
+  const surface = useRef<HTMLDivElement>(null);
+  const returnFocusTo = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    returnFocusTo.current = document.activeElement as HTMLElement | null;
+
+    // Move focus in, preferring the first control over the dialog itself.
+    const focusable = surface.current?.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    (focusable?.[0] ?? surface.current)?.focus();
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      returnFocusTo.current?.focus();
+    };
+  }, []);
+
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+
+    if (event.key !== 'Tab') {
+      return;
+    }
+
+    // Keep Tab inside the dialog by wrapping at either end.
+    const focusable = [
+      ...(surface.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? []),
+    ].filter((element) => element.offsetParent !== null);
+
+    if (focusable.length === 0) {
+      return;
+    }
+
+    const first = focusable[0] as HTMLElement;
+    const last = focusable[focusable.length - 1] as HTMLElement;
+
+    if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    } else if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    }
+  };
+
   return (
     <div
       className="modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
+      onKeyDown={onKeyDown}
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className={wide === true ? 'modal modal--wide' : 'modal'}>
+      <div
+        className={wide === true ? 'modal modal--wide' : 'modal'}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        ref={surface}
+      >
         <header className="modal__header">
-          <h2>{title}</h2>
-          <button className="btn btn--sm" onClick={onClose} aria-label="Close">✕</button>
+          <h2 id={titleId}>{title}</h2>
+          <button type="button" className="btn btn--sm" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="modal__body">{children}</div>
         {footer !== undefined && <footer className="modal__footer">{footer}</footer>}
@@ -276,3 +347,81 @@ export function WarningDigest({
     </div>
   );
 }
+
+/* ----------------------------------------------------------- confirmation -- */
+
+type ConfirmProps = {
+  title: string;
+  /** The one-line question. */
+  question: string;
+  /** What the reader needs to know before answering, if anything. */
+  detail?: ReactNode;
+  confirmLabel: string;
+  /** Marks the action as one that cannot be taken back. */
+  destructive?: boolean;
+  busy?: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+};
+
+/**
+ * Stands in front of an action that cannot be undone.
+ *
+ * Validate freezes a payrun at the database level, Mark paid asserts money has
+ * moved, and Send payslips emails salary documents to the whole workforce. All
+ * three were single unguarded clicks, adjacent to one another, with no undo to
+ * offer afterwards.
+ *
+ * The confirm button carries the verb rather than the word "OK", so the last
+ * thing read before committing says what is about to happen.
+ */
+export function ConfirmDialog({
+  title, question, detail, confirmLabel, destructive, busy, onConfirm, onCancel,
+}: ConfirmProps) {
+  return (
+    <Modal
+      title={title}
+      onClose={onCancel}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onCancel} disabled={busy === true}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className={destructive === true ? 'btn btn--danger' : 'btn btn--primary'}
+            onClick={onConfirm}
+            disabled={busy === true}
+          >
+            {busy === true ? 'Working…' : confirmLabel}
+          </button>
+        </>
+      }
+    >
+      <p className="confirm__body">{question}</p>
+      {detail !== undefined && <div className="confirm__detail">{detail}</div>}
+    </Modal>
+  );
+}
+
+/* --------------------------------------------------------------- details -- */
+
+/**
+ * A label/value pair inside a <dl>.
+ *
+ * Previously copy-pasted into EmployeeDetailPage and PayslipDetailPage, where
+ * the two copies were identical and free to drift.
+ */
+export function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="detail-row">
+      <dt>{label}</dt>
+      <dd>
+        {value === null || value === undefined || value === '' ? <span className="muted">—</span> : value}
+      </dd>
+    </div>
+  );
+}
+
+/** The payrun and payslip lifecycle, named once. */
+export const PAYROLL_WORKFLOW = ['draft', 'computed', 'validated', 'paid'];

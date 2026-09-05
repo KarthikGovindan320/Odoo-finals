@@ -56,10 +56,25 @@ export function DataTable<Row>({
                 style={column.width === undefined ? undefined : { width: column.width }}
                 className={column.numeric === true ? 'table__num' : undefined}
                 data-sortable={column.sortable === true && onSortChange !== undefined ? '' : undefined}
-                onClick={column.sortable === true ? () => toggleSort(column.key) : undefined}
+                aria-sort={
+                  column.sortable !== true || sortKey !== column.key
+                    ? undefined
+                    : sortDirection === 'desc' ? 'descending' : 'ascending'
+                }
               >
-                {column.header}
-                {sortKey === column.key && (sortDirection === 'desc' ? ' ↓' : ' ↑')}
+                {/* A real button, not a click handler on the <th>. The header was
+                    previously unreachable by keyboard and announced no sort
+                    state, so sorting existed only for mouse users. */}
+                {column.sortable === true && onSortChange !== undefined ? (
+                  <button type="button" className="table__sort" onClick={() => toggleSort(column.key)}>
+                    {column.header}
+                    <span aria-hidden="true">
+                      {sortKey === column.key ? (sortDirection === 'desc' ? ' ↓' : ' ↑') : ''}
+                    </span>
+                  </button>
+                ) : (
+                  column.header
+                )}
               </th>
             ))}
           </tr>
@@ -69,7 +84,21 @@ export function DataTable<Row>({
             <tr
               key={rowKey(row)}
               data-clickable={onRowClick === undefined ? undefined : ''}
+              // Rows are the only route into every detail page, so they have to
+              // be operable from the keyboard as well as the mouse.
+              tabIndex={onRowClick === undefined ? undefined : 0}
+              role={onRowClick === undefined ? undefined : 'button'}
               onClick={onRowClick === undefined ? undefined : () => onRowClick(row)}
+              onKeyDown={
+                onRowClick === undefined
+                  ? undefined
+                  : (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onRowClick(row);
+                      }
+                    }
+              }
             >
               {columns.map((column) => (
                 <td key={column.key} className={column.numeric === true ? 'table__num' : undefined}>

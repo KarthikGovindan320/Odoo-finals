@@ -31,7 +31,10 @@
 
   --text:    #14232a;
   --text-2:  #4f6069;
-  --text-3:  #85949b;
+  /* Raised from #85949b, which measured 3.13:1 on white and 2.77:1 on the canvas
+     against the 4.5:1 AA needs -- and this is the token behind .muted, which
+     carries employee numbers, emails and field hints at 11-12px. */
+  --text-3:  #5f6d75;
   --text-on-dark:      #ffffff;
   --text-on-dark-soft: rgba(255, 255, 255, 0.7);
 
@@ -82,12 +85,20 @@
   /* ── Charts ───────────────────────────────────────────────────────────────
    * Departments are ranked by cost, so neighbouring bars must stay apart. The
    * order alternates warm and cool rather than walking a gradient.            */
-  --series-1: #0e6580;
-  --series-2: #b0590c;
-  --series-3: #3e6e9e;
-  --series-4: #b0392a;
-  --series-5: #15803d;
-  --series-6: #8a6210;
+  /* Chosen by measuring perceptual distance (CIE Lab ΔE), not contrast ratio --
+     two hues can differ sharply and still share a luminance, so a contrast check
+     says nothing useful about whether two bars are telling apart.
+     The previous set's closest pair was ΔE 16.4 (petrol vs steel-blue, both
+     cool) with a lightness spread of only 8, so neighbouring bars read as the
+     same colour. This set holds ΔE >= 26 between every pair and spreads
+     lightness across 24 points, which also keeps the bars distinguishable in
+     greyscale and to a colour-blind reader. */
+  --series-1: #0e5c73;  /* petrol       */
+  --series-2: #c4551a;  /* burnt orange */
+  --series-3: #3f7a3f;  /* forest       */
+  --series-4: #8e2f5e;  /* mulberry     */
+  --series-5: #6f93b8;  /* dusty blue   */
+  --series-6: #7a6320;  /* bronze       */
 
   /* ── Type ─────────────────────────────────────────────────────────────── */
   --font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
