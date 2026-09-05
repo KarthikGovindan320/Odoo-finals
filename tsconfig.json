@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
     "target": "ES2023",
-    "lib": ["ES2023"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "module": "NodeNext",
     "moduleResolution": "nodenext",
     "strict": true,
@@ -13,7 +13,8 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "skipLibCheck": true,
+    "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["db/**/*.ts", "shared/**/*.ts", "server/**/*.ts"]
+  "include": ["db/**/*.ts", "shared/**/*.ts", "server/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx"]
 }
