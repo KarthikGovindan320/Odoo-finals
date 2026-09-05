@@ -78,7 +78,12 @@ const CONSTRAINT_MESSAGES: Record<string, string> = {
     'period or the contract dates are inconsistent.',
   users_email_key: 'An account with that email address already exists.',
   employees_work_email_key: 'Another employee already uses that work email address.',
-  employees_employee_number_key: 'That employee number is already taken.',
+  employees_employee_number_key:
+    'That employee number is already in use. Numbers are issued automatically, so this means two ' +
+    'were issued at once — try saving again.',
+  employee_number_shaped:
+    'Employee numbers are issued by the system as EMP-<joining year>-<sequence> and cannot be set ' +
+    'by hand.',
   employee_work_email_shaped:
     'That work email address is not valid. It should look like name@example.com.',
   user_email_shaped: 'That email address is not valid. It should look like name@example.com.',

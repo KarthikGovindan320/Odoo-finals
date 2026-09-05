@@ -157,7 +157,6 @@ export async function seedPeople(
 
     const firstName = demo?.first ?? random.pick(FIRST_NAMES);
     const lastName = demo?.last ?? random.pick(LAST_NAMES);
-    const employeeNumber = `EMP${String(index + 1).padStart(4, '0')}`;
 
     // Interns and part-timers exist so the employee-type dashboard filter has
     // something to separate.
@@ -200,15 +199,19 @@ export async function seedPeople(
     // Two employees have no bank details, on purpose.
     const hasBankDetails = index !== 12 && index !== 27;
 
-    const [employeeRow] = await client.query<{ id: number }>(
+    // The number is issued by the database from the hire date, the same way the
+    // application issues it -- so the seed cannot drift into a format the
+    // constraint would reject, and cannot leave the per-year counters behind
+    // the rows it just wrote.
+    const [employeeRow] = await client.query<{ id: number; employee_number: string }>(
       `INSERT INTO employees
          (employee_number, user_id, first_name, last_name, work_email, work_phone,
           department_id, job_position_id, employment_type_id, working_schedule_id,
           hire_date, status, bank_name, bank_account_number, bank_ifsc)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'active', $12, $13, $14)
-       RETURNING id`,
+       VALUES (next_employee_number($10::date), $1, $2, $3, $4, $5, $6, $7, $8, $9,
+               $10, 'active', $11, $12, $13)
+       RETURNING id, employee_number`,
       [
-        employeeNumber,
         userId,
         firstName,
         lastName,
@@ -225,6 +228,7 @@ export async function seedPeople(
       ],
     );
     const employeeId = (employeeRow as { id: number }).id;
+    const employeeNumber = (employeeRow as { employee_number: string }).employee_number;
 
     employees.push({
       id: employeeId,

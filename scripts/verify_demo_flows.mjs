@@ -274,3 +274,66 @@ check('monthly trend has more than one point', dash.body.monthly_net_trend.lengt
   dash.body.monthly_net_trend.map((m) => m.month).join(', '));
 check('attendance health is computed', typeof dash.body.kpis.attendance_health === 'number',
   `${dash.body.kpis.attendance_health}%`);
+
+console.log('\n=== FLOW 3: employee numbers are issued, not typed ===');
+/*
+ * The number used to be free text on the form, so 'EMP0007', 'emp 7', '7' and
+ * 'Priya' were all equally acceptable. It is now issued by the database as
+ * EMP-<joining year>-<sequence>. What is worth proving over HTTP -- rather than
+ * in SQL, where the check constraint already lives -- is that the whole path
+ * holds: the schema drops a number a caller sends, the route does not
+ * reintroduce one, and the issuer numbers by the year the person was hired.
+ *
+ * Both employees are archived at the end, so a repeated run leaves the roster
+ * as it found it.
+ */
+await call('POST', '/auth/login', { email: 'hr.manager@peoplepay360.local', password: 'Password123!' });
+
+const hireYear = 2019; // A year the seed does not use, so the sequence starts clean.
+// Unique per run: the two employees below are archived, not deleted, so their
+// work emails stay taken and a fixed suffix would collide on a second run.
+const runId = Date.now().toString(36).slice(-6);
+const newHire = async (suffix, forgedNumber) => {
+  const created = await call('POST', '/employees', {
+    // A caller who sends a number anyway: the schema is not passthrough, so this
+    // key is dropped before the route ever sees it.
+    ...(forgedNumber ? { employee_number: forgedNumber } : {}),
+    first_name: 'Numbering', last_name: `Check ${runId}${suffix}`,
+    work_email: `numbering.${runId}${suffix}@peoplepay360.local`,
+    hire_date: `${hireYear}-04-01`, status: 'active',
+  });
+  return created;
+};
+
+const firstHire = await newHire('a', 'HAND-TYPED NONSENSE');
+const secondHire = await newHire('b');
+
+check('creating an employee succeeds without sending a number',
+  firstHire.status === 201, `HTTP ${firstHire.status}`);
+
+const shape = /^EMP-(\d{4})-(\d{4})$/;
+const firstMatch = shape.exec(firstHire.body.employee_number ?? '');
+const secondMatch = shape.exec(secondHire.body.employee_number ?? '');
+
+check('the number is issued in the EMP-<year>-<sequence> shape',
+  firstMatch !== null, firstHire.body.employee_number);
+check('the year in the number is the year the employee was hired',
+  firstMatch?.[1] === String(hireYear), `${firstMatch?.[1]} vs hire year ${hireYear}`);
+check('a number sent by the caller is ignored, not stored',
+  firstHire.body.employee_number !== 'HAND-TYPED NONSENSE', firstHire.body.employee_number);
+check('the next hire in the same year gets the next number in sequence',
+  secondMatch !== null && Number(secondMatch[2]) === Number(firstMatch?.[2]) + 1,
+  `${firstHire.body.employee_number} then ${secondHire.body.employee_number}`);
+
+// A PATCH cannot smuggle one in either -- the same schema governs both verbs.
+const renumbered = await call('PATCH', `/employees/${firstHire.body.id}`, {
+  employee_number: 'STILL NOT ALLOWED', work_phone: '+91 9000000000',
+});
+check('an update cannot overwrite the number, and still applies its other fields',
+  renumbered.body.employee_number === firstHire.body.employee_number
+    && renumbered.body.work_phone === '+91 9000000000',
+  `${renumbered.body.employee_number}, phone ${renumbered.body.work_phone}`);
+
+for (const created of [firstHire, secondHire]) {
+  await call('DELETE', `/employees/${created.body.id}`);
+}

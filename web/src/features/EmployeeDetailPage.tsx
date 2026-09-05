@@ -169,8 +169,8 @@ export function EmployeeDetailPage() {
       {editing && (
         <EmployeeFormModal
           employeeId={data.id}
+          employeeNumber={data.employee_number}
           initial={{
-            employee_number: data.employee_number,
             first_name: data.first_name, last_name: data.last_name,
             work_email: data.work_email, personal_email: data.personal_email ?? '',
             work_phone: data.work_phone ?? '',

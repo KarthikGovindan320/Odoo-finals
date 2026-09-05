@@ -84,7 +84,6 @@ employees.post('/', 'employee:write', validateBody(employeeInput), async (reques
  */
 function toEmployeeInput(existing: NonNullable<Awaited<ReturnType<typeof findEmployee>>>) {
   return {
-    employee_number: existing.employee_number,
     first_name: existing.first_name,
     last_name: existing.last_name,
     work_email: existing.work_email,

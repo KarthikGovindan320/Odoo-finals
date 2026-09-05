@@ -279,7 +279,7 @@ function ContractFormModal({
       <form id="contract-form" onSubmit={(event) => void submit(event)} noValidate>
         <div className="form-grid">
           <TextField label="Reference" name="reference" required value={values.reference}
-            error={errors.reference} onChange={set('reference')} hint="e.g. CTR/EMP0042/2" />
+            error={errors.reference} onChange={set('reference')} hint="e.g. CTR/EMP-2024-0042/2" />
           <EmployeePicker label="Employee" required
             value={values.employee_id} error={errors.employee_id}
             onChange={(id) => setValues((previous) => ({ ...previous, employee_id: id }))} />

@@ -172,8 +172,15 @@ export async function findEmployee(id: number): Promise<EmployeeDetail | null> {
   );
 }
 
+/**
+ * Columns a caller may set. employee_number is not among them: it is issued by
+ * the database from the joining year and a per-year counter, and it is an
+ * identity -- payroll history, payslip PDFs and every list point at it, so it
+ * does not change once assigned. Insert and update share this list precisely so
+ * neither can drift into accepting it.
+ */
 const WRITABLE_COLUMNS = [
-  'employee_number', 'first_name', 'last_name', 'work_email', 'personal_email', 'work_phone',
+  'first_name', 'last_name', 'work_email', 'personal_email', 'work_phone',
   'department_id', 'job_position_id', 'employment_type_id', 'manager_id', 'working_schedule_id',
   'hire_date', 'status', 'termination_date', 'bank_name', 'bank_account_number', 'bank_ifsc',
   'address',
@@ -209,9 +216,16 @@ export async function insertEmployee(
   input: EmployeeInput,
 ): Promise<number> {
   const placeholders = WRITABLE_COLUMNS.map((_, index) => `$${index + 1}`).join(', ');
+
+  // The number comes from next_employee_number(hire_date), inside the same
+  // statement that uses it -- so the counter is only advanced by an insert that
+  // actually lands, and a rolled-back transaction burns no number.
+  const hireDatePosition = WRITABLE_COLUMNS.indexOf('hire_date') + 1;
+
   const row = await client.queryOne<{ id: number }>(
-    `INSERT INTO employees (${WRITABLE_COLUMNS.join(', ')})
-     VALUES (${placeholders}) RETURNING id`,
+    `INSERT INTO employees (employee_number, ${WRITABLE_COLUMNS.join(', ')})
+     VALUES (next_employee_number($${hireDatePosition}::date), ${placeholders})
+     RETURNING id`,
     toParams(input),
   );
   return insertedId(row, 'an employee');

@@ -26,7 +26,7 @@ type Reference = {
 export type EmployeeFormValues = Record<string, string>;
 
 const EMPTY: EmployeeFormValues = {
-  employee_number: '', first_name: '', last_name: '', work_email: '', personal_email: '',
+  first_name: '', last_name: '', work_email: '', personal_email: '',
   work_phone: '', department_id: '', job_position_id: '', employment_type_id: '',
   manager_id: '', working_schedule_id: '', hire_date: new Date().toISOString().slice(0, 10),
   status: 'active', termination_date: '', bank_name: '', bank_account_number: '',
@@ -35,12 +35,14 @@ const EMPTY: EmployeeFormValues = {
 
 type Props = {
   employeeId?: number;
+  /** Shown when editing. Assigned by the database, never edited here. */
+  employeeNumber?: string;
   initial?: EmployeeFormValues;
   onClose: () => void;
   onSaved: () => void;
 };
 
-export function EmployeeFormModal({ employeeId, initial, onClose, onSaved }: Props) {
+export function EmployeeFormModal({ employeeId, employeeNumber, initial, onClose, onSaved }: Props) {
   const reference = useReference();
   const [values, setValues] = useState<EmployeeFormValues>({ ...EMPTY, ...initial });
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -147,10 +149,13 @@ export function EmployeeFormModal({ employeeId, initial, onClose, onSaved }: Pro
       <form id="employee-form" onSubmit={(event) => void submit(event)} noValidate>
         <div className="form-section">
           <div className="form-section__title">Identity</div>
+          {employeeNumber !== undefined && (
+            <p className="muted" style={{ fontSize: 12, marginTop: -4 }}>
+              Employee number <span className="mono">{employeeNumber}</span> — issued on creation
+              from the joining year, and fixed for the life of the record.
+            </p>
+          )}
           <div className="form-grid">
-            <TextField label="Employee number" name="employee_number" required
-              value={values.employee_number} error={errors.employee_number}
-              onChange={set('employee_number')} />
             <TextField label="First name" name="first_name" required
               value={values.first_name} error={errors.first_name} onChange={set('first_name')} />
             <TextField label="Last name" name="last_name" required

@@ -23,7 +23,10 @@ import {
  * result is validated with the full schema. See employee_routes.ts.
  */
 const employeeFields = z.object({
-  employee_number: requiredText('Employee number', 20),
+  // No employee_number. It is issued by the database as
+  // EMP-<joining year>-<sequence> and never accepted from a caller: a format a
+  // user can type is a format a user can mistype, and validating the input
+  // would still leave them guessing which number is free.
   first_name: requiredText('First name', 80),
   last_name: requiredText('Last name', 80),
   work_email: email,
