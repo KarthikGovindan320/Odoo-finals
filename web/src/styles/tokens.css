@@ -85,20 +85,31 @@
   /* ── Charts ───────────────────────────────────────────────────────────────
    * Departments are ranked by cost, so neighbouring bars must stay apart. The
    * order alternates warm and cool rather than walking a gradient.            */
-  /* Chosen by measuring perceptual distance (CIE Lab ΔE), not contrast ratio --
-     two hues can differ sharply and still share a luminance, so a contrast check
-     says nothing useful about whether two bars are telling apart.
-     The previous set's closest pair was ΔE 16.4 (petrol vs steel-blue, both
-     cool) with a lightness spread of only 8, so neighbouring bars read as the
-     same colour. This set holds ΔE >= 26 between every pair and spreads
-     lightness across 24 points, which also keeps the bars distinguishable in
-     greyscale and to a colour-blind reader. */
-  --series-1: #0e5c73;  /* petrol       */
+  /* Validated, not eyeballed: lightness band, chroma floor, adjacent-pair
+     separation under protanopia/deuteranopia/tritanopia, normal-vision floor,
+     and contrast against the surface.
+     An earlier pass here checked only normal-vision CIE Lab distance and passed
+     at ΔE 26 -- but burnt orange against forest green measured ΔE 4.3 under
+     protanopia, which is the classic red-green collision and means two adjacent
+     department bars were indistinguishable to a protanope. Normal vision is not
+     the test that matters for a categorical palette.
+     Assigned in this fixed order and never cycled; a seventh series folds into
+     "Other" rather than inventing a hue. */
+  --series-1: #0b7fa3;  /* teal      */
   --series-2: #c4551a;  /* burnt orange */
-  --series-3: #3f7a3f;  /* forest       */
-  --series-4: #8e2f5e;  /* mulberry     */
-  --series-5: #6f93b8;  /* dusty blue   */
-  --series-6: #7a6320;  /* bronze       */
+  --series-3: #1f8060;  /* jade      */
+  --series-4: #8e2f5e;  /* mulberry  */
+  --series-5: #5f5aa8;  /* violet    */
+  --series-6: #8a6a12;  /* bronze    */
+
+  /* ── Attendance composition ───────────────────────────────────────────────
+   * The four outcomes a scheduled day can have. Ordered as they stack, so the
+   * pairs that sit against each other are the pairs that had to separate.
+   * Validated as its own adjacent set, not assumed from the series order. */
+  --attend-present: #0b7fa3;
+  --attend-paid:    #7a5cc4;
+  --attend-unpaid:  #c4551a;
+  --attend-absent:  #8e2f5e;
 
   /* ── Type ─────────────────────────────────────────────────────────────── */
   --font: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,

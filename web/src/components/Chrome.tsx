@@ -11,6 +11,8 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 
 import { humanize } from '../lib/format.ts';
+import { Icon } from './Icon.tsx';
+import type { IconName } from './Icon.tsx';
 
 /* ------------------------------------------------------------- status bar -- */
 
@@ -56,13 +58,25 @@ type SmartButtonProps = {
   count: number | string;
   label: string;
   to: string;
+  icon: IconName;
 };
 
-export function SmartButton({ count, label, to }: SmartButtonProps) {
+/**
+ * A link to the related records, carrying its own count.
+ *
+ * The icon is what makes the row scannable -- five stacked tiles that differ
+ * only in a word underneath all read as the same object. It is decorative in
+ * the strict sense: the label beside it says the same thing, so the icon is
+ * aria-hidden and the accessible name comes from the text.
+ */
+export function SmartButton({ count, label, to, icon }: SmartButtonProps) {
   return (
     <Link className="smart-button" to={to}>
-      <span className="smart-button__count">{count}</span>
-      <span className="smart-button__label">{label}</span>
+      <span className="smart-button__icon"><Icon name={icon} /></span>
+      <span className="smart-button__text">
+        <span className="smart-button__count">{count}</span>
+        <span className="smart-button__label">{label}</span>
+      </span>
     </Link>
   );
 }

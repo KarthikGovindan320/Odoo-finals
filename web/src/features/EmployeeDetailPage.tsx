@@ -13,6 +13,8 @@ import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.t
 import { useAuth } from '../lib/auth.tsx';
 import { useBackTo } from '../lib/use_back_to.ts';
 import { Badge, DetailRow, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
+import { AttendanceComposition } from '../components/AttendanceComposition.tsx';
+import type { AttendanceSummary } from '../components/AttendanceComposition.tsx';
 import { EmployeeFormModal } from './EmployeeFormModal.tsx';
 
 type EmployeeDetail = {
@@ -44,6 +46,7 @@ export function EmployeeDetailPage() {
 
   const { data, loading, error, reload } = useResource<EmployeeDetail>(`/employees/${id}`);
   const balances = useResource<{ rows: Balance[] }>(`/time-off/balances?employee_id=${id}`);
+  const attendance = useResource<AttendanceSummary>(`/employees/${id}/attendance-summary`);
 
   if (loading) return <div className="loading">Loading employee…</div>;
   if (error !== null) return <div className="error-box">{error}</div>;
@@ -82,16 +85,16 @@ export function EmployeeDetailPage() {
         </div>
 
         <div className="smart-buttons">
-          <SmartButton count={data.contract_count} label="Contracts"
+          <SmartButton icon="contract" count={data.contract_count} label="Contracts"
             to={`/contracts?employee_id=${data.id}`} />
-          <SmartButton count={data.attendance_count} label="Attendance"
+          <SmartButton icon="clock" count={data.attendance_count} label="Attendance"
             to={`/attendance?employee_id=${data.id}`} />
-          <SmartButton count={data.time_off_count} label="Time off"
+          <SmartButton icon="calendar" count={data.time_off_count} label="Time off"
             to={`/time-off?employee_id=${data.id}&tab=requests`} />
-          <SmartButton count={data.allocation_count} label="Allocations"
+          <SmartButton icon="wallet" count={data.allocation_count} label="Allocations"
             to={`/time-off?employee_id=${data.id}&tab=allocations`} />
           {can('payrun:read') && (
-            <SmartButton count={data.payslip_count} label="Payslips"
+            <SmartButton icon="receipt" count={data.payslip_count} label="Payslips"
               to={`/payroll?tab=payslips&employee_id=${data.id}`} />
           )}
         </div>
@@ -134,6 +137,16 @@ export function EmployeeDetailPage() {
           </dl>
         </Panel>
       </div>
+
+      <Panel title="Attendance — last 90 days">
+        {attendance.error !== null ? (
+          <p className="muted" style={{ margin: 0 }}>{attendance.error}</p>
+        ) : attendance.data === null ? (
+          <div className="loading">Loading…</div>
+        ) : (
+          <AttendanceComposition data={attendance.data} />
+        )}
+      </Panel>
 
       <Panel title="Leave balances" flush>
         {balances.data === null || balances.data.rows.length === 0 ? (
