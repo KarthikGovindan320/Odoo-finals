@@ -48,7 +48,12 @@ export type PayslipContext = {
     seniority_years: number;
   };
   contract: {
+    /** The wage exactly as the contract states it, in its own unit. */
     wage: number;
+    /** The same pay normalised to a month, whatever unit the contract uses. */
+    monthly_wage: number;
+    /** The same pay normalised to an hour. */
+    hourly_wage: number;
     schedule_hours_per_week: number;
   };
   period: {
@@ -101,7 +106,14 @@ const NET_CATEGORY = 'NET';
 function bindContext(context: PayslipContext): Map<string, number> {
   return new Map<string, number>([
     ['employee.seniority_years', context.employee.seniority_years],
+    // contract.wage is the figure as written on the contract, which for an
+    // hourly contract is an hourly rate. A rule that multiplies it by a
+    // proration factor is therefore only correct for monthly contracts -- hence
+    // the two normalised forms beside it, which mean the same thing whatever
+    // wage_type says. See contract_wage.ts.
     ['contract.wage', context.contract.wage],
+    ['contract.monthly_wage', context.contract.monthly_wage],
+    ['contract.hourly_wage', context.contract.hourly_wage],
     ['contract.schedule_hours_per_week', context.contract.schedule_hours_per_week],
     ['period.calendar_days', context.period.calendar_days],
     ['worked.scheduled_days', context.worked.scheduled_days],
@@ -114,6 +126,13 @@ function bindContext(context: PayslipContext): Map<string, number> {
     ['worked.proration_factor', context.worked.proration_factor],
   ]);
 }
+
+/**
+ * Test seam. bindContext is the authority on which variable names exist at
+ * runtime; exporting it lets a test assert that CONTEXT_VARIABLE_NAMES -- which
+ * the static checker trusts -- lists exactly the same set.
+ */
+export const bindContextForTest = bindContext;
 
 function resolvePercentageBase(
   baseCode: string,

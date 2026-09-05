@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { computePayslip } from '../src/services/payroll/rule_engine.ts';
+import { normaliseWage } from '../src/services/payroll/contract_wage.ts';
 import type {
   PayslipContext,
   SalaryRuleDefinition,
@@ -71,7 +72,7 @@ const REGULAR_SALARY: SalaryRuleDefinition[] = [
 function contextFor(overrides: Partial<PayslipContext['worked']> = {}): PayslipContext {
   return {
     employee: { id: 1, seniority_years: 3 },
-    contract: { wage: 60000, schedule_hours_per_week: 40 },
+    contract: { ...normaliseWage(60000, 'monthly', 40), schedule_hours_per_week: 40 },
     period: { calendar_days: 30 },
     worked: {
       scheduled_days: 22,

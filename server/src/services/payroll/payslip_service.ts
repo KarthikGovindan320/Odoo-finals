@@ -6,13 +6,22 @@
  * -- no contract, a broken formula -- are captured as blocker warnings rather than
  * thrown, because the point of Compute is to show the payroll officer everything
  * that is wrong at once, not to stop at the first bad row.
+ *
+ * Anything that stops a payslip computing is a blocker, never a warning: a
+ * warning would let the payrun validate around it and the employee would simply
+ * not be paid, with a yellow badge as the only trace. See warnings.ts.
+ *
+ * Lookups that repeat across employees -- schedules, rule sets -- are read once
+ * per run and held in a cache that lives for exactly this transaction.
  */
 import { AppError } from '../../errors/app_error.ts';
 import type { TransactionClient } from '../../db/pool.ts';
 import { computePayslip } from './rule_engine.ts';
+import { lockPayrun } from './payrun_service.ts';
 import type { SalaryRuleDefinition } from './rule_engine.ts';
 import { resolveContractForPeriod } from './contract_resolver.ts';
-import { buildWorkedSummary, toPayslipContext } from './context_builder.ts';
+import { buildWorkedSummary, createPayrollCache, toPayslipContext } from './context_builder.ts';
+import type { PayrollCache } from './context_builder.ts';
 import {
   collectContextWarnings,
   replaceWarnings,
@@ -78,15 +87,43 @@ export async function computePayrun(
   client: TransactionClient,
   payrun: PayrunRow,
 ): Promise<ComputeSummary> {
-  if (payrun.state === 'validated' || payrun.state === 'paid') {
+  // Hold the payrun row for the rest of the transaction, so two concurrent
+  // computes cannot interleave one's DELETE of payslip_lines with the other's
+  // INSERTs. The state check below is only meaningful once the row is held.
+  const locked = await lockPayrun(client, payrun.id);
+
+  if (locked.state === 'validated' || locked.state === 'paid') {
     throw new AppError(
       'workflow_violation',
-      `Payrun ${payrun.name} is ${payrun.state} and is historical. Recomputing it would rewrite ` +
+      `Payrun ${payrun.name} is ${locked.state} and is historical. Recomputing it would rewrite ` +
         'payslips that have already been finalized.',
     );
   }
 
-  const rules = await loadStructureRules(client, payrun.salary_structure_id);
+  if (locked.state === 'cancelled') {
+    throw new AppError(
+      'workflow_violation',
+      `Payrun ${payrun.name} was cancelled. Recomputing it would bring it back into the ` +
+        'active workflow; create a new payrun instead.',
+    );
+  }
+
+  const cache = createPayrollCache();
+  // Structures repeat across employees too, and the contract's structure wins
+  // over the payrun's -- so without this the "intern on the intern structure"
+  // case re-read the same rule set once per intern.
+  const ruleSets = new Map<number, SalaryRuleDefinition[]>();
+  const rulesFor = async (structureId: number): Promise<SalaryRuleDefinition[]> => {
+    const cached = ruleSets.get(structureId);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const loaded = await loadStructureRules(client, structureId);
+    ruleSets.set(structureId, loaded);
+    return loaded;
+  };
+
+  const rules = await rulesFor(payrun.salary_structure_id);
 
   const payslips = await client.query<PayslipRow>(
     `SELECT p.id, p.employee_id,
@@ -105,7 +142,7 @@ export async function computePayrun(
   let failed = 0;
 
   for (const payslip of payslips) {
-    const outcome = await computeOnePayslip(client, payrun, payslip, rules);
+    const outcome = await computeOnePayslip(client, payrun, payslip, rules, cache, rulesFor);
     allWarnings.push(...outcome.warnings);
 
     if (outcome.succeeded) {
@@ -135,6 +172,8 @@ async function computeOnePayslip(
   payrun: PayrunRow,
   payslip: PayslipRow,
   rules: SalaryRuleDefinition[],
+  cache: PayrollCache,
+  rulesFor: (structureId: number) => Promise<SalaryRuleDefinition[]>,
 ): Promise<{ succeeded: boolean; warnings: DraftWarning[] }> {
   const warnings: DraftWarning[] = await collectContextWarnings(client, {
     payslipId: payslip.id,
@@ -186,12 +225,18 @@ async function computeOnePayslip(
     const superseded = supersededContracts
       .map((candidate) => candidate.reference)
       .join(', ');
+
+    // Say the consequence, not just the fact. This payslip prices only the days
+    // the surviving contract covers, so the days under the earlier one are not
+    // on it -- and a message that stops at "was not used" reads like a note when
+    // it is actually money missing.
     warnings.push(
       warning(
-        'PARTIAL_CONTRACT',
-        `${payslip.employee_name} changed contract during this period. Pay is based on ` +
-          `${contract.reference}, which is in force on ${payrun.period_end}; ${superseded} also ` +
-          'covered part of the period and was not used.',
+        'CONTRACT_CHANGED',
+        `${payslip.employee_name} changed contract during this period. This payslip pays only the ` +
+          `days covered by ${contract.reference} (in force on ${payrun.period_end}). The earlier ` +
+          `days under ${superseded} are NOT included and must be paid on a separate payrun for ` +
+          'that part of the period.',
         payslip.id,
       ),
     );
@@ -216,7 +261,7 @@ async function computeOnePayslip(
     fallbackScheduleId: payslip.working_schedule_id,
     periodStart: payrun.period_start,
     periodEnd: payrun.period_end,
-  });
+  }, cache);
 
   if (worked.scheduled_days === 0) {
     warnings.push(
@@ -238,6 +283,26 @@ async function computeOnePayslip(
         `Contract ${contract.reference} covers only part of this period ` +
           `(${contract.start_date} to ${contract.end_date ?? 'open-ended'}). ` +
           `Pay has been prorated to ${Math.round(worked.proration_factor * 100)}% accordingly.`,
+        payslip.id,
+      ),
+    );
+  }
+
+  // Pay is not driven by attendance: paid_days is scheduled days minus unpaid
+  // leave, so a day nobody turned up for and nobody filed leave for is still
+  // paid. That is a defensible policy, but silently paying it while the payslip
+  // prints "0 / 22 worked days" leaves a payroll officer unable to tell policy
+  // from bug. The gap is named here so the decision is a visible one.
+  const unexplainedAbsences =
+    worked.scheduled_days - worked.attended_days - worked.paid_leave_days - worked.unpaid_leave_days;
+
+  if (unexplainedAbsences > 0) {
+    warnings.push(
+      warning(
+        'UNEXPLAINED_ABSENCE',
+        `${payslip.employee_name} has ${unexplainedAbsences} scheduled day(s) with no attendance ` +
+          'and no approved leave. They are being paid for those days — record attendance or a ' +
+          'leave request if that is wrong.',
         payslip.id,
       ),
     );
@@ -269,7 +334,7 @@ async function computeOnePayslip(
   const applicableRules =
     contract.salary_structure_id === payrun.salary_structure_id
       ? rules
-      : await loadStructureRules(client, contract.salary_structure_id);
+      : await rulesFor(contract.salary_structure_id);
 
   let result;
   try {
@@ -281,7 +346,7 @@ async function computeOnePayslip(
       throw error;
     }
     warnings.push(
-      warning('NO_STRUCTURE', `${payslip.employee_name}: ${error.message}`, payslip.id),
+      warning('RULE_ERROR', `${payslip.employee_name}: ${error.message}`, payslip.id),
     );
     await clearComputation(client, payslip.id);
     return { succeeded: false, warnings };
@@ -300,17 +365,34 @@ async function computeOnePayslip(
 
   await clearComputation(client, payslip.id);
 
-  for (const line of result.lines) {
+  // One statement rather than one per line. A 12-rule structure over 500
+  // employees is 6,000 round trips the other way, each firing the payslip_lines
+  // immutability trigger, inside a single long transaction.
+  if (result.lines.length > 0) {
     await client.query(
       `INSERT INTO payslip_lines
          (payslip_id, salary_rule_id, rule_code, rule_name, category_code, category_sign,
           sequence, computation_type, source_expression, quantity, rate, amount)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+       SELECT $1, *
+         FROM unnest(
+           $2::smallint[], $3::text[], $4::text[], $5::text[], $6::smallint[],
+           $7::integer[], $8::text[], $9::text[],
+           $10::numeric[], $11::numeric[], $12::numeric[]
+         )`,
       [
-        payslip.id, line.salary_rule_id, line.rule_code, line.rule_name, line.category_code,
-        line.category_sign, line.sequence, line.computation_type, line.source_expression,
-        line.quantity, line.rate, line.amount,
-      ],
+        payslip.id,
+        result.lines.map((line) => line.salary_rule_id),
+        result.lines.map((line) => line.rule_code),
+        result.lines.map((line) => line.rule_name),
+        result.lines.map((line) => line.category_code),
+        result.lines.map((line) => line.category_sign),
+        result.lines.map((line) => line.sequence),
+        result.lines.map((line) => line.computation_type),
+        result.lines.map((line) => line.source_expression),
+        result.lines.map((line) => line.quantity),
+        result.lines.map((line) => line.rate),
+        result.lines.map((line) => line.amount),
+      ] as never,
     );
   }
 
