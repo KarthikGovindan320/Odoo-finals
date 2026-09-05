@@ -15,13 +15,14 @@ import { Link, useLocation } from 'react-router';
  */
 const LINKABLE_PATHS = new Set([
   '/dashboard', '/employees', '/profile', '/contracts', '/working-schedules',
-  '/attendance', '/time-off', '/payroll', '/salary-config',
+  '/attendance', '/time-off', '/payroll', '/salary-config', '/audit',
 ]);
 
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: 'Reports',
   employees: 'Employees',
   profile: 'Profile',
+  audit: 'Audit trail',
   contracts: 'Contracts',
   'working-schedules': 'Working Schedules',
   attendance: 'Attendance',

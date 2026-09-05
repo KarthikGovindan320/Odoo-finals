@@ -20,6 +20,7 @@ import { attendanceRouter } from './routes/attendance_routes.ts';
 import { timeOffRouter } from './routes/time_off_routes.ts';
 import { salaryConfigRouter } from './routes/salary_config_routes.ts';
 import { payrunRouter, payslipRouter } from './routes/payrun_routes.ts';
+import { auditRouter } from './routes/audit_routes.ts';
 import { dashboardRouter } from './routes/dashboard_routes.ts';
 import { referenceRouter } from './routes/reference_routes.ts';
 
@@ -72,6 +73,7 @@ export function createApp(): Express {
   app.use('/api/v1/salary', salaryConfigRouter);
   app.use('/api/v1/payruns', payrunRouter);
   app.use('/api/v1/payslips', payslipRouter);
+  app.use('/api/v1/audit', auditRouter);
   app.use('/api/v1/dashboard', dashboardRouter);
   app.use('/api/v1/reference', referenceRouter);
 

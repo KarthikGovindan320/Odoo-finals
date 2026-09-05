@@ -48,6 +48,8 @@ const PayslipDetailPage = lazy(() =>
   import('../features/PayslipDetailPage.tsx').then((m) => ({ default: m.PayslipDetailPage })));
 const SalaryConfigPage = lazy(() =>
   import('../features/SalaryConfigPage.tsx').then((m) => ({ default: m.SalaryConfigPage })));
+const AuditPage = lazy(() =>
+  import('../features/AuditPage.tsx').then((m) => ({ default: m.AuditPage })));
 
 type NavItem = { to: string; label: string; permission: string };
 
@@ -113,6 +115,7 @@ const NAV_ITEMS: NavItem[] = [
   { to: '/time-off', label: 'Time Off', permission: 'timeoff:read' },
   { to: '/payroll', label: 'Payroll', permission: 'payrun:read' },
   { to: '/salary-config', label: 'Configuration', permission: 'salary_config:read' },
+  { to: '/audit', label: 'Audit', permission: 'audit:read' },
   { to: '/dashboard', label: 'Reports', permission: 'dashboard:read' },
 ];
 
@@ -219,6 +222,7 @@ export function App() {
           <Route path="/payroll/payruns/:id" element={<RequirePermission permission="payrun:read"><PayrunDetailPage /></RequirePermission>} />
           <Route path="/payroll/payslips/:id" element={<RequirePermission permission="payrun:read"><PayslipDetailPage /></RequirePermission>} />
           <Route path="/salary-config" element={<RequirePermission permission="salary_config:read"><SalaryConfigPage /></RequirePermission>} />
+          <Route path="/audit" element={<RequirePermission permission="audit:read"><AuditPage /></RequirePermission>} />
           <Route path="*" element={<NotFound home={home} />} />
         </Routes>
         </Suspense>

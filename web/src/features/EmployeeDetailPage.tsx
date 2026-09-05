@@ -12,7 +12,7 @@
  * never came from a list.
  */
 import { useState } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
@@ -43,6 +43,7 @@ type Balance = {
 };
 
 export function EmployeeDetailPage({ employeeId }: { employeeId?: number }) {
+  const navigate = useNavigate();
   const { id: idFromRoute } = useParams();
   const id = employeeId ?? idFromRoute;
   const ownProfile = employeeId !== undefined;

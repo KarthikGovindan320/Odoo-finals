@@ -35,17 +35,44 @@ async function main(): Promise<void> {
     console.log('  reference data ...');
     const reference = await seedReferenceData(client);
 
+    const userWithRole = async (code: string): Promise<number> => {
+      const row = await client.queryOne<{ id: number }>(
+        'SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = $1',
+        [code],
+      );
+      return (row as { id: number }).id;
+    };
+
+    /*
+     * Who the audit triggers should record for the writes that follow.
+     *
+     * The seed runs in one transaction, so withTransaction's single actor cannot
+     * vary across its phases -- and every one of fifty thousand audit rows came
+     * out attributed to nobody. A trail that says "system" on every line looks
+     * like a broken feature rather than an unattributed import, and it is more
+     * useful when HR appears to have done the HR work.
+     *
+     * Employees and contracts stay unattributed on purpose. They are the initial
+     * import, they happen before any user account exists to blame, and "system"
+     * is the true answer for them rather than a placeholder.
+     *
+     * set_config rather than SET LOCAL because SET takes no parameters. The
+     * `true` is is-local: it lasts to the end of this transaction and no longer.
+     */
+    const actingAs = async (userId: number): Promise<void> => {
+      await client.query('SELECT set_config($1, $2, true)', ['app.actor_user_id', String(userId)]);
+    };
+
     console.log('  employees and contracts ...');
     const { employees, contracts } = await seedPeople(client, reference, random, today);
 
-    const hrUser = await client.queryOne<{ id: number }>(
-      `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'hr_manager'`,
-    );
-    const payrollUser = await client.queryOne<{ id: number }>(
-      `SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE r.code = 'hr_payroll_manager'`,
-    );
+    const hrUserId = await userWithRole('hr_manager');
+    const payrollUserId = await userWithRole('hr_payroll_manager');
+    const hrUser = { id: hrUserId };
+    const payrollUser = { id: payrollUserId };
 
     console.log('  attendance ...');
+    await actingAs(hrUserId);
     const attendanceRows = await seedAttendance(
       client, employees, random, today, (hrUser as { id: number }).id,
     );
@@ -56,6 +83,7 @@ async function main(): Promise<void> {
     );
 
     console.log('  payroll history ...');
+    await actingAs(payrollUserId);
     const payroll = await seedPayrollHistory(
       client,
       reference.salaryStructureIds.REGULAR as number,
