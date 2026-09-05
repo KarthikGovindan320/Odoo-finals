@@ -15,6 +15,7 @@ export type ErrorCode =
   | 'rule_configuration_invalid'
   | 'workflow_violation'
   | 'rate_limited'
+  | 'export_too_large'
   | 'internal_error';
 
 const STATUS_BY_CODE: Record<ErrorCode, number> = {
@@ -26,6 +27,8 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   rule_configuration_invalid: 422,
   workflow_violation: 409,
   rate_limited: 429,
+  // 413: the request is fine, the response would be the problem.
+  export_too_large: 413,
   internal_error: 500,
 };
 

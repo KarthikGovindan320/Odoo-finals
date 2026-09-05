@@ -22,12 +22,13 @@ import type { QueryParameter } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
+import { assertExportable, sendSheet } from '../export/respond.ts';
 import {
   decisionInput,
   timeOffAllocationInput,
   timeOffRequestInput,
 } from '../../../shared/schemas/hr.ts';
-import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
+import { exportFormat, identifier, paginationQuery } from '../../../shared/schemas/common.ts';
 import { consumeForRequest, releaseForRequest } from '../services/time_off/consumption.ts';
 import { deriveLeaveDuration } from '../services/time_off/duration.ts';
 
@@ -249,6 +250,78 @@ timeOff.get('/requests', 'timeoff:read', async (request, response) => {
     rows, page: filters.page, page_size: filters.page_size, total: totalRow?.total ?? 0,
     total_pages: Math.max(Math.ceil((totalRow?.total ?? 0) / filters.page_size), 1),
   });
+});
+
+timeOff.get('/requests/export', 'timeoff:read', async (request, response) => {
+  const filters = parseOrThrow(
+    z.object({
+      employee_id: identifier.optional(),
+      state: z.enum(['draft', 'to_approve', 'approved', 'refused', 'cancelled']).optional(),
+      format: exportFormat,
+    }),
+    request.query,
+  );
+
+  const conditions: string[] = ['true'];
+  const params: QueryParameter[] = [];
+  const restrictTo = scopedEmployeeId(request) ?? filters.employee_id;
+  if (restrictTo != null) {
+    params.push(restrictTo);
+    conditions.push(`r.employee_id = $${params.length}`);
+  }
+  if (filters.state) {
+    params.push(filters.state);
+    conditions.push(`r.state = $${params.length}`);
+  }
+  const where = conditions.join(' AND ');
+
+  const totalRow = await queryOne<{ total: number }>(
+    `SELECT count(*)::int AS total FROM time_off_requests r WHERE ${where}`,
+    params,
+  );
+  assertExportable(totalRow?.total ?? 0);
+
+  const rows = await query<Record<string, string | number | null>>(
+    `SELECT e.employee_number,
+            e.first_name || ' ' || e.last_name AS employee_name,
+            d.name AS department_name,
+            t.name AS type_name, t.unit, t.is_paid,
+            r.date_from::text, r.date_to::text,
+            r.requested_amount::float8 AS requested_amount,
+            COALESCE((SELECT SUM(c.amount) FROM time_off_consumptions c
+                       WHERE c.time_off_request_id = r.id), 0)::float8 AS consumed_amount,
+            r.state, r.reason, r.decision_note, r.decided_at::text,
+            u.email AS decided_by
+       FROM time_off_requests r
+       JOIN employees e      ON e.id = r.employee_id
+       JOIN time_off_types t ON t.id = r.time_off_type_id
+       LEFT JOIN departments d ON d.id = e.department_id
+       LEFT JOIN users u     ON u.id = r.decided_by_user_id
+      WHERE ${where}
+      ORDER BY r.date_from DESC, r.id DESC`,
+    params,
+  );
+
+  sendSheet(response, {
+    name: 'Time off requests',
+    rows,
+    columns: [
+      { header: 'Employee number', value: (row) => row.employee_number },
+      { header: 'Employee', value: (row) => row.employee_name },
+      { header: 'Department', value: (row) => row.department_name },
+      { header: 'Type', value: (row) => row.type_name },
+      { header: 'Paid', value: (row) => (row.is_paid ? 'Yes' : 'No') },
+      { header: 'From', type: 'date', value: (row) => row.date_from },
+      { header: 'To', type: 'date', value: (row) => row.date_to },
+      { header: 'Requested', type: 'number', value: (row) => row.requested_amount },
+      { header: 'Consumed', type: 'number', value: (row) => row.consumed_amount },
+      { header: 'Unit', value: (row) => row.unit },
+      { header: 'State', value: (row) => row.state },
+      { header: 'Reason', value: (row) => row.reason },
+      { header: 'Decision note', value: (row) => row.decision_note },
+      { header: 'Decided by', value: (row) => row.decided_by },
+    ],
+  }, filters.format);
 });
 
 timeOff.post('/requests', 'timeoff:write', validateBody(timeOffRequestInput), async (request, response) => {

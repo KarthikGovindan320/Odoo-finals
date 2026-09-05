@@ -13,6 +13,7 @@
  * the note on the POST handler for what each of them was getting wrong.
  */
 import { z } from 'zod';
+import type { Request } from 'express';
 
 import { AppError, forbidden, notFound, workflowViolation } from '../errors/app_error.ts';
 import { query, queryOne, withTransaction, insertedId } from '../db/pool.ts';
@@ -20,8 +21,11 @@ import type { QueryParameter } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
+import { assertExportable, sendSheet } from '../export/respond.ts';
 import { attendanceInput } from '../../../shared/schemas/hr.ts';
-import { identifier, isoDate, paginationQuery } from '../../../shared/schemas/common.ts';
+import {
+  exportFormat, identifier, isoDate, paginationQuery,
+} from '../../../shared/schemas/common.ts';
 import { TENANT_TIMEZONE } from '../../../shared/tenant.ts';
 
 type AttendanceRow = {
@@ -44,10 +48,24 @@ const listQuery = paginationQuery.safeExtend({
   to: isoDate.optional(),
 });
 
+/** See employee_routes.ts: the list's filters, without its pagination. */
+const exportQuery = listQuery.omit({ page: true, page_size: true }).extend({
+  format: exportFormat,
+});
+
 const attendance = createGuardedRouter();
 
-attendance.get('/', 'attendance:read', async (request, response) => {
-  const filters = parseOrThrow(listQuery, request.query);
+/**
+ * The WHERE the list and the export share.
+ *
+ * Extracted rather than copied. An export that filters even slightly differently
+ * from the screen it was launched from is a file that disagrees with what the
+ * person saw, and they will not find out from the file.
+ */
+function attendanceFilter(
+  request: Request,
+  filters: { employee_id?: number; status?: string; from?: string; to?: string },
+): { where: string; params: QueryParameter[] } {
   const conditions: string[] = ['true'];
   const params: QueryParameter[] = [];
 
@@ -73,7 +91,12 @@ attendance.get('/', 'attendance:read', async (request, response) => {
     );
   }
 
-  const where = conditions.join(' AND ');
+  return { where: conditions.join(' AND '), params };
+}
+
+attendance.get('/', 'attendance:read', async (request, response) => {
+  const filters = parseOrThrow(listQuery, request.query);
+  const { where, params } = attendanceFilter(request, filters);
   const totalRow = await queryOne<{ total: number }>(
     `SELECT count(*)::int AS total FROM attendance_records a WHERE ${where}`,
     params,
@@ -98,6 +121,69 @@ attendance.get('/', 'attendance:read', async (request, response) => {
     rows, page: filters.page, page_size: filters.page_size, total: totalRow?.total ?? 0,
     total_pages: Math.max(Math.ceil((totalRow?.total ?? 0) / filters.page_size), 1),
   });
+});
+
+attendance.get('/export', 'attendance:read', async (request, response) => {
+  const filters = parseOrThrow(exportQuery, request.query);
+  const { where, params } = attendanceFilter(request, filters);
+
+  const totalRow = await queryOne<{ total: number }>(
+    `SELECT count(*)::int AS total FROM attendance_records a WHERE ${where}`,
+    params,
+  );
+  assertExportable(totalRow?.total ?? 0);
+
+  const rows = await query<AttendanceRow & { employee_number: string; department_name: string | null }>(
+    `SELECT a.id, a.employee_id,
+            e.employee_number,
+            e.first_name || ' ' || e.last_name AS employee_name,
+            d.name AS department_name,
+            a.check_in, a.check_out, a.worked_hours, a.status,
+            a.is_manually_edited, a.edit_reason,
+            u.email AS edited_by
+       FROM attendance_records a
+       JOIN employees e ON e.id = a.employee_id
+       LEFT JOIN departments d ON d.id = e.department_id
+       LEFT JOIN users u ON u.id = a.edited_by_user_id
+      WHERE ${where}
+      ORDER BY a.check_in DESC`,
+    params,
+  );
+
+  /*
+   * Timestamps are written in the tenant's timezone, split into a date and a
+   * time. A UTC instant in a spreadsheet is read as a local one by whoever opens
+   * it, so a 09:00 check-in becomes 03:30 the moment it leaves this system --
+   * and the column is a report about when people arrived.
+   */
+  const local = (value: string | null, part: 'date' | 'time'): string => {
+    if (value === null) return '';
+    const shown = new Date(value).toLocaleString('en-GB', {
+      timeZone: TENANT_TIMEZONE,
+      ...(part === 'date'
+        ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+        : { hour: '2-digit', minute: '2-digit', hour12: false }),
+    });
+    return part === 'date' ? shown.split('/').reverse().join('-') : shown;
+  };
+
+  sendSheet(response, {
+    name: 'Attendance',
+    rows,
+    columns: [
+      { header: 'Employee number', value: (row) => row.employee_number },
+      { header: 'Employee', value: (row) => row.employee_name },
+      { header: 'Department', value: (row) => row.department_name },
+      { header: 'Date', type: 'date', value: (row) => local(row.check_in, 'date') },
+      { header: 'Check in', value: (row) => local(row.check_in, 'time') },
+      { header: 'Check out', value: (row) => local(row.check_out, 'time') },
+      { header: 'Worked hours', type: 'number', value: (row) => row.worked_hours },
+      { header: 'Status', value: (row) => row.status },
+      { header: 'Manually edited', value: (row) => (row.is_manually_edited ? 'Yes' : 'No') },
+      { header: 'Edit reason', value: (row) => row.edit_reason },
+      { header: 'Edited by', value: (row) => row.edited_by },
+    ],
+  }, filters.format);
 });
 
 attendance.post('/', 'attendance:write', validateBody(attendanceInput), async (request, response) => {

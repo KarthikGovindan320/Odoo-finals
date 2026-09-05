@@ -669,3 +669,94 @@ await call('POST', '/auth/login', {
 const simRefused = await call('POST', `/payruns/${biggest.id}/simulate`, { wage_change_percent: 10 });
 check('an employee cannot price a payroll-wide scenario',
   simRefused.status === 403, `HTTP ${simRefused.status}`);
+
+console.log('\n=== FLOW 7: exports carry the filtered set, not the page ===');
+/*
+ * The property worth checking is not that a file comes back. It is that the file
+ * holds everything the filter matches -- a button labelled "Export" that hands
+ * over the twenty-five rows on screen is wrong in a way nobody notices until
+ * they are reconciling against it.
+ *
+ * So every check here compares the row count in the file against the total the
+ * list endpoint reports for the same filters.
+ */
+await call('POST', '/auth/login', {
+  email: 'admin@peoplepay360.local', password: 'Password123!',
+});
+
+/** Fetches a file rather than JSON, and counts its data rows. */
+async function download(path) {
+  const response = await fetch(`${API}${path}`, { headers: { cookie } });
+  const buffer = Buffer.from(await response.arrayBuffer());
+  return {
+    status: response.status,
+    type: response.headers.get('content-type') ?? '',
+    disposition: response.headers.get('content-disposition') ?? '',
+    buffer,
+    // Records, not lines: a note containing a newline spans two lines and is
+    // still one row, so count the quoted starts of records instead.
+    csvRows: buffer.toString('utf8').split('\r\n"').length - 1,
+  };
+}
+
+const employeeTotal = (await call('GET', '/employees?page_size=1')).body.total;
+const employeeCsv = await download('/employees/export?format=csv');
+
+check('an export downloads as a file, named and typed',
+  employeeCsv.status === 200
+    && employeeCsv.type.startsWith('text/csv')
+    && /attachment; filename="employees-\d{4}-\d{2}-\d{2}\.csv"/.test(employeeCsv.disposition),
+  employeeCsv.disposition);
+check('the employee export holds every employee, not the page on screen',
+  employeeCsv.csvRows === employeeTotal,
+  `${employeeCsv.csvRows} rows in the file, ${employeeTotal} employees`);
+
+// The same request with a filter must produce the same count the list reports.
+const departments = (await call('GET', '/reference')).body.departments ?? [];
+const oneDepartment = departments[0];
+if (oneDepartment !== undefined) {
+  const filtered = await call('GET', `/employees?page_size=1&department_id=${oneDepartment.id}`);
+  const filteredCsv = await download(`/employees/export?format=csv&department_id=${oneDepartment.id}`);
+  check('a filtered export matches the filter that was on screen',
+    filteredCsv.csvRows === filtered.body.total,
+    `${oneDepartment.name}: ${filteredCsv.csvRows} in the file, ${filtered.body.total} in the list`);
+}
+
+// Attendance is the big one -- forty thousand rows -- and the one where a silent
+// page-sized export would be least likely to be noticed.
+const attendanceTotal = (await call('GET', '/attendance?page_size=1')).body.total;
+const attendanceCsv = await download('/attendance/export?format=csv');
+check('the attendance export holds the whole table',
+  attendanceCsv.csvRows === attendanceTotal,
+  `${attendanceCsv.csvRows} rows in the file, ${attendanceTotal} records`);
+
+const xlsx = await download('/employees/export?format=xlsx');
+check('the workbook is a zip, not a CSV wearing the extension',
+  xlsx.buffer.subarray(0, 2).toString() === 'PK'
+    && xlsx.type.includes('spreadsheetml'),
+  `${xlsx.buffer.length} bytes, ${xlsx.type.split(';')[0]}`);
+// The parts Excel refuses to open a workbook without.
+const asText = xlsx.buffer.toString('latin1');
+check('the workbook carries the parts that make it openable',
+  ['[Content_Types].xml', 'xl/workbook.xml', 'xl/worksheets/sheet1.xml', 'xl/styles.xml']
+    .every((part) => asText.includes(part)));
+
+for (const path of ['/contracts/export', '/payslips/export', '/time-off/requests/export']) {
+  const listPath = path.replace('/export', '');
+  const listed = (await call('GET', `${listPath}?page_size=1`)).body.total;
+  const file = await download(`${path}?format=csv`);
+  check(`${listPath} exports every row it lists`,
+    file.status === 200 && file.csvRows === listed,
+    `${file.csvRows} in the file, ${listed} in the list`);
+}
+
+// Scope is the server's, not the screen's: an employee exporting the list they
+// are allowed to see must get their own rows and nobody else's.
+await call('POST', '/auth/login', {
+  email: 'employee@peoplepay360.local', password: 'Password123!',
+});
+const ownTotal = (await call('GET', '/attendance?page_size=1')).body.total;
+const ownFile = await download('/attendance/export?format=csv');
+check('an employee exports their own records and only those',
+  ownFile.status === 200 && ownFile.csvRows === ownTotal && ownTotal < attendanceTotal,
+  `${ownFile.csvRows} of their own, against ${attendanceTotal} in the whole table`);

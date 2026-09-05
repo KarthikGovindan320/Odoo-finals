@@ -86,3 +86,11 @@ export const paginationQuery = z.object({
 });
 
 export type Pagination = z.infer<typeof paginationQuery>;
+
+/**
+ * Which file an export should produce.
+ *
+ * Defaulting to csv rather than requiring the parameter: a bare /export URL in a
+ * browser then gives something openable instead of a validation error.
+ */
+export const exportFormat = z.enum(['csv', 'xlsx']).default('csv');

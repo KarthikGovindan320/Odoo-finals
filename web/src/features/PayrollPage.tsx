@@ -16,6 +16,7 @@ import { useDebounced } from '../lib/use_debounced.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
+import { ExportButtons } from '../components/ExportButtons.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { SelectField, TextField } from '../components/Field.tsx';
 import { payrunCreateInput, payrunScopeInput } from '../../../shared/schemas/payroll.ts';

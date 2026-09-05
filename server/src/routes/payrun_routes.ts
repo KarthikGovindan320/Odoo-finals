@@ -13,7 +13,7 @@ import type { QueryParameter } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
-import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
+import { exportFormat, identifier, paginationQuery } from '../../../shared/schemas/common.ts';
 import {
   payrunCreateInput,
   payrunScenarioInput,
@@ -23,6 +23,7 @@ import { computePayrun } from '../services/payroll/payslip_service.ts';
 import { explainPayslip } from '../services/payroll/explain.ts';
 import { comparePayslip } from '../services/payroll/compare.ts';
 import { simulatePayrun } from '../services/payroll/scenario.ts';
+import { assertExportable, sendSheet } from '../export/respond.ts';
 import type { PayrunRow } from '../services/payroll/payslip_service.ts';
 import {
   createPayrun,
@@ -435,6 +436,96 @@ payslips.get('/', 'payrun:read', async (request, response) => {
     rows, page: filters.page, page_size: filters.page_size, total: totalRow?.total ?? 0,
     total_pages: Math.max(Math.ceil((totalRow?.total ?? 0) / filters.page_size), 1),
   });
+});
+
+payslips.get('/export', 'payrun:read', async (request, response) => {
+  const filters = parseOrThrow(
+    z.object({
+      q: z.string().max(120).optional(),
+      employee_id: identifier.optional(),
+      payrun_id: identifier.optional(),
+      state: z.string().max(20).optional(),
+      format: exportFormat,
+    }),
+    request.query,
+  );
+
+  const conditions: string[] = ['true'];
+  const params: QueryParameter[] = [];
+  const restrictTo = scopedEmployeeId(request) ?? filters.employee_id;
+  if (restrictTo != null) {
+    params.push(restrictTo);
+    conditions.push(`ps.employee_id = $${params.length}`);
+  }
+  if (filters.payrun_id !== undefined) {
+    params.push(filters.payrun_id);
+    conditions.push(`ps.payrun_id = $${params.length}`);
+  }
+  if (filters.state) {
+    params.push(filters.state);
+    conditions.push(`ps.state = $${params.length}`);
+  }
+  const where = conditions.join(' AND ');
+
+  const totalRow = await queryOne<{ total: number }>(
+    `SELECT count(*)::int AS total FROM payslips ps WHERE ${where}`,
+    params,
+  );
+  assertExportable(totalRow?.total ?? 0);
+
+  const rows = await query<Record<string, string | number | null>>(
+    `SELECT ps.number, e.employee_number,
+            e.first_name || ' ' || e.last_name AS employee_name,
+            d.name AS department_name,
+            p.name AS payrun_name, s.name AS structure_name,
+            ps.period_start::text, ps.period_end::text, ps.state,
+            ps.scheduled_days::float8    AS scheduled_days,
+            ps.worked_days::float8       AS worked_days,
+            ps.paid_leave_days::float8   AS paid_leave_days,
+            ps.unpaid_leave_days::float8 AS unpaid_leave_days,
+            ps.overtime_hours::float8    AS overtime_hours,
+            ps.gross_amount::float8      AS gross_amount,
+            ps.net_amount::float8        AS net_amount,
+            ps.currency_code,
+            e.bank_name, e.bank_ifsc, e.bank_account_number
+       FROM payslips ps
+       JOIN employees e ON e.id = ps.employee_id
+       JOIN payruns p   ON p.id = ps.payrun_id
+       JOIN salary_structures s ON s.id = ps.salary_structure_id
+       LEFT JOIN departments d ON d.id = e.department_id
+      WHERE ${where}
+      ORDER BY ps.period_start DESC, e.employee_number`,
+    params,
+  );
+
+  sendSheet(response, {
+    name: 'Payslips',
+    rows,
+    columns: [
+      { header: 'Payslip', value: (row) => row.number },
+      { header: 'Employee number', value: (row) => row.employee_number },
+      { header: 'Employee', value: (row) => row.employee_name },
+      { header: 'Department', value: (row) => row.department_name },
+      { header: 'Payrun', value: (row) => row.payrun_name },
+      { header: 'Salary structure', value: (row) => row.structure_name },
+      { header: 'Period start', type: 'date', value: (row) => row.period_start },
+      { header: 'Period end', type: 'date', value: (row) => row.period_end },
+      { header: 'State', value: (row) => row.state },
+      { header: 'Scheduled days', type: 'number', value: (row) => row.scheduled_days },
+      { header: 'Worked days', type: 'number', value: (row) => row.worked_days },
+      { header: 'Paid leave days', type: 'number', value: (row) => row.paid_leave_days },
+      { header: 'Unpaid leave days', type: 'number', value: (row) => row.unpaid_leave_days },
+      { header: 'Overtime hours', type: 'number', value: (row) => row.overtime_hours },
+      { header: 'Gross', type: 'number', value: (row) => row.gross_amount },
+      { header: 'Net', type: 'number', value: (row) => row.net_amount },
+      { header: 'Currency', value: (row) => row.currency_code },
+      { header: 'Bank', value: (row) => row.bank_name },
+      { header: 'IFSC', value: (row) => row.bank_ifsc },
+      // Written as text: a spreadsheet reads a long digit string as a number and
+      // shows 7.84096E+11, which is not an account anybody can pay into.
+      { header: 'Account number', value: (row) => row.bank_account_number },
+    ],
+  }, filters.format);
 });
 
 payslips.get('/:id', 'payrun:read', async (request, response) => {

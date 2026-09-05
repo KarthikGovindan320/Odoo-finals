@@ -13,8 +13,9 @@ import { withTransaction } from '../db/pool.ts';
 import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
+import { assertExportable, EXPORT_ROW_LIMIT, sendSheet } from '../export/respond.ts';
 import { contractInput, contractPatchInput } from '../../../shared/schemas/hr.ts';
-import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
+import { exportFormat, identifier, paginationQuery } from '../../../shared/schemas/common.ts';
 import {
   findContract,
   insertContract,
@@ -25,6 +26,11 @@ import {
 const listQuery = paginationQuery.safeExtend({
   employee_id: identifier.optional(),
   state: z.enum(['draft', 'running', 'expired', 'cancelled']).optional(),
+});
+
+/** See employee_routes.ts: the list's filters, without its pagination. */
+const exportQuery = listQuery.omit({ page: true, page_size: true }).extend({
+  format: exportFormat,
 });
 
 const contracts = createGuardedRouter();
@@ -44,6 +50,39 @@ contracts.get('/', 'contract:read', async (request, response) => {
     rows, page: filters.page, page_size: filters.page_size, total,
     total_pages: Math.max(Math.ceil(total / filters.page_size), 1),
   });
+});
+
+contracts.get('/export', 'contract:read', async (request, response) => {
+  const filters = parseOrThrow(exportQuery, request.query);
+
+  const { rows, total } = await listContracts({
+    employeeId: filters.employee_id,
+    state: filters.state,
+    search: filters.q,
+    page: 1,
+    pageSize: EXPORT_ROW_LIMIT,
+    scopedEmployeeId: scopedEmployeeId(request),
+  });
+  assertExportable(total);
+
+  sendSheet(response, {
+    name: 'Contracts',
+    rows,
+    columns: [
+      { header: 'Reference', value: (row) => row.reference },
+      { header: 'Employee number', value: (row) => row.employee_number },
+      { header: 'Employee', value: (row) => row.employee_name },
+      { header: 'Department', value: (row) => row.department_name },
+      { header: 'Position', value: (row) => row.job_title },
+      { header: 'Start date', type: 'date', value: (row) => row.start_date },
+      { header: 'End date', type: 'date', value: (row) => row.end_date },
+      { header: 'State', value: (row) => row.state },
+      { header: 'Wage', type: 'number', value: (row) => row.wage },
+      { header: 'Wage type', value: (row) => row.wage_type },
+      { header: 'Salary structure', value: (row) => row.structure_name },
+      { header: 'Working schedule', value: (row) => row.schedule_name },
+    ],
+  }, filters.format);
 });
 
 contracts.get('/:id', 'contract:read', async (request, response) => {

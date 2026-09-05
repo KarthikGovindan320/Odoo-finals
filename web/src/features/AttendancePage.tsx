@@ -18,6 +18,7 @@ import { DataTable, Pagination, type Column } from '../components/DataTable.tsx'
 import { TextAreaField, TextField } from '../components/Field.tsx';
 import { fromLocalInput, toLocalInput, todayInTenantZone } from '../lib/timezone.ts';
 import { Icon } from '../components/Icon.tsx';
+import { ExportButtons } from '../components/ExportButtons.tsx';
 
 type AttendanceRow = {
   id: number; employee_id: number; employee_name: string;
@@ -107,7 +108,18 @@ export function AttendancePage() {
       {error !== null && <div className="error-box">{error}</div>}
 
       <Panel flush>
-        <Toolbar right={<span className="toolbar__count">{data?.total ?? 0} records</span>}>
+        <Toolbar
+          right={
+            <>
+              <span className="toolbar__count">{data?.total ?? 0} records</span>
+              <ExportButtons
+                path="/attendance/export"
+                name="attendance"
+                query={{ employee_id: employeeFilter, status, from, to }}
+              />
+            </>
+          }
+        >
           <select className="select" style={{ width: 'auto' }} value={status}
             onChange={(event) => { setPage(1); setStatus(event.target.value); }}
             aria-label="Filter by status">

@@ -168,3 +168,39 @@ export async function openPdf(path: string): Promise<void> {
   // Freed once the new tab has taken its own reference.
   setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
 }
+
+/**
+ * Downloads a file the API generates.
+ *
+ * Through fetch rather than a plain <a href> for the same two reasons openPdf
+ * is: the response may be an error, which as a link lands the user on a tab of
+ * raw JSON, and a relative href assumes the API shares the page's origin, which
+ * is only true while the dev proxy is in front of it.
+ *
+ * The filename comes from Content-Disposition when the server sent one, so the
+ * name of the file is decided by whatever built it rather than guessed here.
+ */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const response = await fetch(`${BASE_URL}${path}`, { credentials: 'include' });
+
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as
+      | { error?: { message?: string } }
+      | null;
+    throw new Error(payload?.error?.message ?? `Could not prepare the download (${response.status}).`);
+  }
+
+  const disposition = response.headers.get('content-disposition') ?? '';
+  const named = /filename="([^"]+)"/.exec(disposition);
+
+  const blobUrl = URL.createObjectURL(await response.blob());
+  const link = document.createElement('a');
+  link.href = blobUrl;
+  link.download = named?.[1] ?? fallbackName;
+  document.body.append(link);
+  link.click();
+  link.remove();
+
+  // Long enough for the browser to have started writing the file.
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+}

@@ -20,6 +20,7 @@ import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { SelectField, TextAreaField, TextField } from '../components/Field.tsx';
 import { EmployeePicker } from '../components/EmployeePicker.tsx';
+import { ExportButtons } from '../components/ExportButtons.tsx';
 import { contractInput } from '../../../shared/schemas/hr.ts';
 
 type ContractRow = {
@@ -124,7 +125,16 @@ export function ContractsPage() {
           search={search}
           onSearchChange={(value) => { setPage(1); setSearch(value); }}
           searchPlaceholder="Search reference or employee…"
-          right={<span className="toolbar__count">{data?.total ?? 0} contracts</span>}
+          right={
+            <>
+              <span className="toolbar__count">{data?.total ?? 0} contracts</span>
+              <ExportButtons
+                path="/contracts/export"
+                name="contracts"
+                query={{ q: settledSearch, state, employee_id: employeeFilter }}
+              />
+            </>
+          }
         >
           <select className="select" style={{ width: 'auto' }} value={state}
             onChange={(event) => { setPage(1); setState(event.target.value); }}
