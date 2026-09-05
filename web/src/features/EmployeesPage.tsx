@@ -199,6 +199,9 @@ export function EmployeesPage() {
               <KanbanByDepartment
                 rows={data?.rows ?? []}
                 loading={loading}
+                  total={data?.total ?? 0}
+                  page={data?.page ?? 1}
+                  pageSize={pageSize}
                 onOpen={(id) => navigate(`/employees/${id}`)}
               />
             </div>
@@ -225,12 +228,21 @@ export function EmployeesPage() {
   );
 }
 
-/** Kanban columns are departments -- the grouping HR actually thinks in. */
+/**
+ * Kanban columns are departments -- the grouping HR actually thinks in.
+ *
+ * The board groups the page it was given, so a column's count is what is on this
+ * page and not the department's headcount. That is said on screen rather than
+ * left for someone to discover by adding the columns up and getting 60.
+ */
 function KanbanByDepartment({
-  rows, loading, onOpen,
+  rows, loading, total, page, pageSize, onOpen,
 }: {
   rows: EmployeeRow[];
   loading: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
   onOpen: (id: number) => void;
 }) {
   if (loading) return <div className="loading">Loading…</div>;
@@ -238,35 +250,95 @@ function KanbanByDepartment({
 
   const groups = new Map<string, EmployeeRow[]>();
   for (const row of rows) {
-    const key = row.department_name ?? 'Unassigned';
+    const key = row.department_name ?? UNASSIGNED;
     groups.set(key, [...(groups.get(key) ?? []), row]);
   }
 
+  // Alphabetical, with the department that is not a department last. Insertion
+  // order meant the columns rearranged themselves whenever the sort or the page
+  // changed, so the same board never looked the same twice.
+  const columns = [...groups.entries()].sort(([left], [right]) => {
+    if (left === UNASSIGNED) return 1;
+    if (right === UNASSIGNED) return -1;
+    return left.localeCompare(right);
+  });
+
   return (
-    <div className="kanban">
-      {[...groups.entries()].map(([department, members]) => (
-        <div className="kanban__column" key={department}>
-          <div className="kanban__column-header">
-            <span>{department}</span>
-            <span className="kanban__count">{members.length}</span>
-          </div>
-          <div className="kanban__cards">
-            {members.map((row) => (
-              <div className="kanban-card" key={row.id} onClick={() => onOpen(row.id)}>
-                <div className="kanban-card__name">{row.first_name} {row.last_name}</div>
-                <div className="kanban-card__meta">
-                  {row.job_title ?? 'No position'}<br />
-                  <span className="mono">{row.employee_number}</span>
-                  {row.current_wage !== null && ` · ${formatMoney(row.current_wage)}`}
-                </div>
-                <div style={{ marginTop: 6 }}>
-                  <Badge variant={stateVariant(row.status)}>{humanize(row.status)}</Badge>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
+    <>
+      {total > rows.length && (
+        <p className="kanban__scope">
+          Showing {rows.length} of {total} employees — page {page} of{' '}
+          {Math.ceil(total / pageSize)}. Column counts are for this page.
+        </p>
+      )}
+
+      <div className="kanban">
+        {columns.map(([department, members]) => (
+          <section className="kanban__column" key={department} aria-label={department}>
+            <h3 className="kanban__column-header">
+              <span className="kanban__column-name">{department}</span>
+              <span className="kanban__count">{members.length}</span>
+            </h3>
+            <div className="kanban__cards">
+              {members.map((row) => (
+                /*
+                 * A button, not a div with a click handler. The stylesheet has
+                 * carried a :focus-visible rule for these cards -- and a comment
+                 * saying they are buttons -- while the markup gave them no way to
+                 * take focus, so the rule could never fire and the board could
+                 * not be used from a keyboard at all.
+                 */
+                <button
+                  type="button"
+                  className="kanban-card"
+                  key={row.id}
+                  onClick={() => onOpen(row.id)}
+                  aria-label={
+                    `${row.first_name} ${row.last_name}, ${row.employee_number}, `
+                    + `${humanize(row.status)}`
+                  }
+                >
+                  <span className="kanban-card__top">
+                    <span className="kanban-card__avatar" aria-hidden="true">
+                      {initials(row.first_name, row.last_name)}
+                    </span>
+                    <span className="kanban-card__who">
+                      <span className="kanban-card__name">{row.first_name} {row.last_name}</span>
+                      <span className="kanban-card__role">{row.job_title ?? 'No position'}</span>
+                    </span>
+                  </span>
+
+                  <span className="kanban-card__foot">
+                    <span className="mono kanban-card__number">{row.employee_number}</span>
+                    <span className="kanban-card__wage">
+                      {row.current_wage === null ? 'No contract' : formatMoney(row.current_wage)}
+                    </span>
+                  </span>
+
+                  {/* Only when it is not the norm. A green "Active" chip on
+                      every card in every column is sixty repetitions of the
+                      default, and it buries the two cards that are not. The
+                      status is on the button's accessible name either way, so
+                      nothing is lost to a reader who cannot see the difference
+                      between a card with a chip and one without. */}
+                  {row.status !== 'active' && (
+                    <span className="kanban-card__status">
+                      <Badge variant={stateVariant(row.status)}>{humanize(row.status)}</Badge>
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+    </>
   );
+}
+
+const UNASSIGNED = 'Unassigned';
+
+/** Two letters standing in for a photograph this system does not hold. */
+function initials(first: string, last: string): string {
+  return `${first.charAt(0)}${last.charAt(0)}`.toUpperCase();
 }

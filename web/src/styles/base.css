@@ -343,29 +343,74 @@ a:hover { text-decoration: underline; }
 
 /* ══ Kanban ══════════════════════════════════════════════════════════════ */
 
-.kanban { display: flex; gap: var(--space-3); overflow-x: auto; padding-bottom: var(--space-3); }
-.kanban__column { flex: 0 0 258px; }
-.kanban__column-header {
-  display: flex; justify-content: space-between; align-items: center;
-  font-size: var(--size-micro); font-weight: 600; text-transform: uppercase;
-  color: var(--text-2); padding: var(--space-2) var(--space-1);
-  letter-spacing: var(--track-label);
-  border-bottom: 2px solid var(--line); margin-bottom: var(--space-2);
+.kanban__scope {
+  margin: 0 0 var(--space-3); font-size: var(--size-micro); color: var(--text-3);
 }
+
+.kanban { display: flex; gap: var(--space-3); overflow-x: auto; padding-bottom: var(--space-3); }
+.kanban__column { flex: 0 0 262px; display: flex; flex-direction: column; }
+
+/* Sticky against the page scroll, so the department a card belongs to is still
+   named when you are forty cards down a column. */
+.kanban__column-header {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; justify-content: space-between; align-items: center; gap: var(--space-2);
+  margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-1);
+  font-size: var(--size-micro); font-weight: 600; text-transform: uppercase;
+  color: var(--text-2); letter-spacing: var(--track-label);
+  background: var(--canvas);
+  border-bottom: 2px solid var(--line);
+}
+.kanban__column-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kanban__count {
-  font-family: var(--font-mono); background: var(--line-soft);
+  flex: none; font-family: var(--font-mono); background: var(--line-soft);
   padding: 0 6px; border-radius: 999px; color: var(--text-2);
 }
+
 .kanban__cards { display: flex; flex-direction: column; gap: var(--space-2); }
+
 .kanban-card {
+  display: grid; gap: var(--space-2);
+  width: 100%; text-align: left; font: inherit; color: inherit;
   background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--petrol);
   border-radius: var(--radius); padding: var(--space-3); cursor: pointer;
-  border-left: 3px solid var(--petrol); box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-sm);
   transition: transform 120ms ease, box-shadow 120ms ease, border-left-color 120ms ease;
 }
 .kanban-card:hover { transform: translateY(-2px); box-shadow: var(--shadow); border-left-color: var(--ochre); }
-.kanban-card__name { font-weight: 600; margin-bottom: 2px; }
-.kanban-card__meta { font-size: var(--size-xs); color: var(--text-2); line-height: 1.55; }
+
+.kanban-card__top { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+
+/* Initials rather than a photograph, because there are no photographs. Purely
+   decorative -- the name is right beside it -- so it is hidden from assistive
+   technology and takes one neutral tint instead of a colour that would imply a
+   category the system does not have. */
+.kanban-card__avatar {
+  flex: none; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--petrol-wash); color: var(--petrol-ink);
+  font-size: var(--size-micro); font-weight: 700; letter-spacing: 0.02em;
+}
+.kanban-card__who { display: grid; gap: 1px; min-width: 0; }
+.kanban-card__name {
+  font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.kanban-card__role {
+  font-size: var(--size-micro); color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Number and wage on one baseline, the wage right-aligned and tabular so a
+   column of cards can be read down as a column of figures. */
+.kanban-card__foot {
+  display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-2);
+  padding-top: var(--space-2); border-top: 1px solid var(--line-soft);
+  font-size: var(--size-micro);
+}
+.kanban-card__number { color: var(--text-3); }
+.kanban-card__wage { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text-2); }
+.kanban-card__status { display: flex; }
 
 /* ══ Dashboard ═══════════════════════════════════════════════════════════ */
 
