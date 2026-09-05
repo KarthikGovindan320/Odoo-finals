@@ -44,7 +44,40 @@ async function loadApplied(client: pg.Client): Promise<Map<string, string>> {
   return new Map(rows.map((row) => [row.version, row.checksum]));
 }
 
+/**
+ * --reset drops everything. It is guarded rather than merely documented, because
+ * the connection comes from ambient PG* variables: whatever is in the shell is
+ * what gets dropped, and the command that rebuilds a laptop is the command that
+ * empties production.
+ */
+function assertResetIsSafe(client: pg.Client): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'Refusing to --reset with NODE_ENV=production. This drops every table in the database.',
+    );
+  }
+
+  const database = (client as unknown as { database?: string }).database ?? process.env.PGDATABASE;
+  if (process.env.CONFIRM_RESET_DATABASE !== undefined) {
+    if (process.env.CONFIRM_RESET_DATABASE !== database) {
+      throw new Error(
+        `CONFIRM_RESET_DATABASE is '${process.env.CONFIRM_RESET_DATABASE}' but the connection is ` +
+          `to '${database}'. Refusing to reset the wrong database.`,
+      );
+    }
+    return;
+  }
+
+  if (!process.stdout.isTTY) {
+    throw new Error(
+      `Refusing to --reset '${database}' from a non-interactive shell. Set ` +
+        `CONFIRM_RESET_DATABASE='${database}' if this is really what you want.`,
+    );
+  }
+}
+
 async function resetSchema(client: pg.Client): Promise<void> {
+  assertResetIsSafe(client);
   console.log('  reset: dropping schema public');
   await client.query('DROP SCHEMA public CASCADE');
   await client.query('CREATE SCHEMA public');
@@ -71,6 +104,11 @@ async function main(): Promise<void> {
   await client.connect();
 
   try {
+    // One migrator at a time. Two concurrent runs would each read the same
+    // pending set and each try to apply it; the lock is released when the
+    // session ends, so a crashed run does not leave it held.
+    await client.query('SELECT pg_advisory_lock(hashtext($1))', ['peoplepay360:migrate']);
+
     if (shouldReset) {
       await resetSchema(client);
     }
