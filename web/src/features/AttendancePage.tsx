@@ -16,8 +16,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { TextAreaField, TextField } from '../components/Field.tsx';
-import { fromLocalInput, toLocalInput } from '../lib/timezone.ts';
-import { readBiometricPreference, writeBiometricPreference } from '../lib/biometric.ts';
+import { fromLocalInput, toLocalInput, todayInTenantZone } from '../lib/timezone.ts';
 import { Icon } from '../components/Icon.tsx';
 
 type AttendanceRow = {
@@ -29,7 +28,7 @@ type AttendanceRow = {
 
 export function AttendancePage() {
   const [params] = useSearchParams();
-  const { can, user } = useAuth();
+  const { can, user, scopeOf } = useAuth();
   const employeeFilter = params.get('employee_id') ?? '';
 
   const [status, setStatus] = useState('');
@@ -90,7 +89,12 @@ export function AttendancePage() {
           "today only" rule behind it all existed; there was simply no control
           anywhere in the interface that used them, so the Employee role could
           not record its own attendance at all. */}
-      {can('attendance:write') && user?.employee_id != null && (
+      {/* The employee's own screen only. HR, payroll and admin all hold
+          attendance:write at scope 'all' and are themselves linked to employee
+          records, so permission alone would show this to them too -- holding it
+          is not the same question as "is this my attendance screen". The scope
+          is what separates the two. */}
+      {scopeOf('attendance:write') === 'own' && user?.employee_id != null && (
         <PunchClock employeeId={user.employee_id} onChanged={() => reload()} />
       )}
 
@@ -224,8 +228,6 @@ function CorrectionModal({
 
 /* ------------------------------------------------------------ punch clock -- */
 
-type OpenPunch = { id: number; check_in: string } | null;
-
 /**
  * Check in, and later check out.
  *
@@ -235,31 +237,39 @@ type OpenPunch = { id: number; check_in: string } | null;
  * the completed record: the exclusion constraint means the open row has to go
  * first, which the server does inside the same transaction.
  */
+/**
+ * The employee's own attendance control: one toggle, which is the punch.
+ *
+ * On means a reader has them present -- an open attendance record for today.
+ * Off closes it. The button's state is read from that record rather than kept
+ * beside it, so it survives a reload and cannot drift from what the table
+ * below shows: both are looking at the same rows.
+ *
+ * "Today" matters. A punch left open from a previous day stays in the table as
+ * the missing check-out it is, and does not light this up -- otherwise turning
+ * it off would try to close yesterday with today's clock, which the server
+ * refuses and rightly so.
+ *
+ * There is no reader attached. Recording the punch is a real write either way;
+ * what the wording claims is the only part that is ahead of the hardware.
+ */
 function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: () => void }) {
-  const open = useResource<{ rows: AttendanceRow[] }>(
-    `/attendance${queryString({ employee_id: employeeId, status: 'missing_checkout', page_size: 1 })}`,
+  const today = todayInTenantZone();
+
+  const open = useResource<Page<AttendanceRow>>(
+    `/attendance${queryString({
+      employee_id: employeeId, status: 'missing_checkout',
+      from: today, to: today, page_size: 1,
+    })}`,
   );
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Employee view only. HR, payroll and admin all hold attendance:write at
-  // scope 'all' and are themselves linked to employee records, so they see this
-  // bar too -- holding the permission is not the same question as "is this my
-  // own attendance screen". The scope is what separates the two.
-  const { scopeOf } = useAuth();
-  const isOwnView = scopeOf('attendance:write') === 'own';
+  const current = open.data?.rows[0] ?? null;
+  const on = current !== null;
 
-  // Presentation only, and deliberately so: there is no reader attached, and
-  // the attendance record written is identical either way. What the toggle
-  // changes is how the punch is offered -- which is the half of a biometric
-  // rollout that exists before the hardware does. Wiring a real device means
-  // replacing the punch() call below, not this flag.
-  const [biometric, setBiometric] = useState(readBiometricPreference);
-  const scanning = biometric && isOwnView;
-
-  const current: OpenPunch = open.data?.rows[0] ?? null;
-
-  const punch = async (): Promise<void> => {
+  const toggle = async (): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
@@ -272,6 +282,7 @@ function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: 
         await api.post(`/attendance/${current.id}/check-out`, {});
       }
       open.reload();
+      // The table below is the record; it has to move when this does.
       onChanged();
     } catch (caught: unknown) {
       setError(caught instanceof ApiError ? caught.message : 'Could not record that.');
@@ -280,46 +291,20 @@ function PunchClock({ employeeId, onChanged }: { employeeId: number; onChanged: 
     }
   };
 
-  const action = current === null ? 'Check in' : 'Check out';
-
   return (
-    <div className={`punch${scanning ? ' punch--biometric' : ''}`}>
-      <div className="punch__state">
-        {current === null ? (
-          <span className="muted">Not checked in.</span>
-        ) : (
-          <span>
-            Checked in at <strong>{formatTime(current.check_in)}</strong>{' '}
-            <span className="muted">— remember to check out before you leave.</span>
-          </span>
-        )}
-      </div>
-
-      {/* A toggle button rather than a checkbox: it turns a mode on and off and
-          shows its own state, which is what aria-pressed is for. */}
-      {isOwnView && (
-        <button
-          type="button"
-          className={`punch__toggle${biometric ? ' punch__toggle--on' : ''}`}
-          aria-pressed={biometric}
-          onClick={() => {
-            const next = !biometric;
-            setBiometric(next);
-            writeBiometricPreference(next);
-          }}
-        >
-          <Icon name="fingerprint" />
-          Biometric Attendance
-          <span className="punch__toggle-state">{biometric ? 'On' : 'Off'}</span>
-        </button>
-      )}
-
+    <div className={`punch${on ? ' punch--biometric' : ''}`}>
       <button
-        className={current === null ? 'btn btn--primary' : 'btn'}
-        onClick={() => void punch()}
+        type="button"
+        className={`punch__toggle${on ? ' punch__toggle--on' : ''}`}
+        aria-pressed={on}
         disabled={busy || open.loading}
+        onClick={() => void toggle()}
       >
-        {busy ? 'Recording…' : scanning ? `Scan to ${action.toLowerCase()}` : action}
+        <Icon name="fingerprint" />
+        Biometric Attendance
+        <span className="punch__toggle-state">
+          {busy ? '…' : on ? 'On' : 'Off'}
+        </span>
       </button>
 
       {error !== null && <span className="field__error" role="alert">{error}</span>}

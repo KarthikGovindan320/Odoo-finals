@@ -96,3 +96,11 @@ export function fromLocalInput(value: string): string | null {
 
   return instant.toISOString();
 }
+
+/** Today's date in the tenant timezone, as YYYY-MM-DD. */
+export function todayInTenantZone(): string {
+  return new Intl.DateTimeFormat('sv-SE', {
+    timeZone: TENANT_TIMEZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
