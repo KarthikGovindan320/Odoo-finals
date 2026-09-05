@@ -1,7 +1,7 @@
 /** Payload schemas for salary configuration and payrun processing. */
 import { z } from 'zod';
 
-import { identifier, isoDate, optionalText, requiredText } from './common.ts';
+import { identifier, isoDate, MAX_RULE_AMOUNT, optionalText, requiredText } from './common.ts';
 
 export const salaryRuleInput = z.object({
   code: z
@@ -12,7 +12,12 @@ export const salaryRuleInput = z.object({
   name: requiredText('Rule name', 120),
   category_id: identifier,
   computation_type: z.enum(['fixed', 'percentage', 'formula']),
-  amount_fixed: z.coerce.number().nullable().optional(),
+  amount_fixed: z.coerce
+    .number()
+    .min(-MAX_RULE_AMOUNT, 'That amount is outside the range this field can store.')
+    .max(MAX_RULE_AMOUNT, 'That amount is outside the range this field can store.')
+    .nullable()
+    .optional(),
   percentage: z.coerce.number().min(-1000).max(1000).nullable().optional(),
   percentage_base_code: z.string().trim().max(30).nullable().optional(),
   formula_expression: z.string().trim().max(500).nullable().optional(),
@@ -87,13 +92,36 @@ export const payrunScopeInput = z.object({
       path: ['period_end'],
       message: 'A payroll period cannot end before it starts.',
     });
+    return;
+  }
+
+  // A period is a month, occasionally a fortnight. Anything beyond a year is a
+  // mistyped date, and left unbounded it is also a denial of service: the
+  // context builder walks the period a day at a time, per employee, inside one
+  // transaction -- so 1900 to 2100 is ~73,000 iterations times the headcount.
+  const days =
+    (Date.parse(`${value.period_end}T00:00:00Z`) - Date.parse(`${value.period_start}T00:00:00Z`))
+      / 86_400_000 + 1;
+  if (days > 366) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['period_end'],
+      message: `A payroll period covers at most a year. This one spans ${Math.round(days)} days.`,
+    });
   }
 });
 
 /** Step 2 adds the explicit employee selection and actually creates the batch. */
 export const payrunCreateInput = payrunScopeInput.safeExtend({
   name: requiredText('Payrun name', 60),
-  employee_ids: z.array(identifier).min(1, 'Select at least one employee to include in this payrun.'),
+  employee_ids: z
+    .array(identifier)
+    .min(1, 'Select at least one employee to include in this payrun.')
+    .max(5000, 'That is more employees than one payrun can hold.')
+    // The same employee twice would hit payslip_one_per_employee_per_run as a
+    // 409 halfway through creating the batch. Collapsing here says the same
+    // thing without half a payrun existing first.
+    .transform((ids) => [...new Set(ids)]),
 });
 
 export type SalaryRuleInput = z.infer<typeof salaryRuleInput>;
