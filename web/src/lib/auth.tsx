@@ -9,7 +9,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 
-import { api, ApiError } from './api.ts';
+import { api, ApiError, markSessionEstablished, onSessionExpired } from './api.ts';
 
 export type AccessScope = 'own' | 'all';
 
@@ -41,7 +41,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     api
       .get<{ user: CurrentUser }>('/auth/me')
-      .then((response) => setUser(response.user))
+      .then((response) => {
+        setUser(response.user);
+        markSessionEstablished(true);
+      })
       .catch((error: unknown) => {
         // A 401 here is the normal "not signed in yet" case, not a failure worth
         // reporting. Anything else is genuinely unexpected.
@@ -53,14 +56,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setLoading(false));
   }, []);
 
+  /**
+   * A session that lapses mid-use drops the whole app back to the login screen,
+   * rather than leaving every panel showing "Sign in to continue." inside a shell
+   * the user can no longer use.
+   */
+  useEffect(() => onSessionExpired(() => setUser(null)), []);
+
   const signIn = useCallback(async (email: string, password: string) => {
     const response = await api.post<{ user: CurrentUser }>('/auth/login', { email, password });
     setUser(response.user);
+    markSessionEstablished(true);
   }, []);
 
   const signOut = useCallback(async () => {
-    await api.post('/auth/logout');
-    setUser(null);
+    try {
+      await api.post('/auth/logout');
+    } finally {
+      // Sign out locally even if the request failed. Leaving someone apparently
+      // signed in because the network dropped is the wrong way round for a
+      // control whose whole purpose is to end the session.
+      markSessionEstablished(false);
+      setUser(null);
+    }
   }, []);
 
   const value = useMemo<AuthState>(

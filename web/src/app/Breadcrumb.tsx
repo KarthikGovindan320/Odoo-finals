@@ -7,6 +7,17 @@
  */
 import { Link, useLocation } from 'react-router';
 
+/**
+ * Paths a crumb may link to. A segment absent from this set is rendered as plain
+ * text rather than a link: the trail is built by joining segments, and
+ * /payroll/payruns and /payroll/payslips are groupings in the URL rather than
+ * routes, so linking them landed the user on the 404 page.
+ */
+const LINKABLE_PATHS = new Set([
+  '/dashboard', '/employees', '/contracts', '/working-schedules',
+  '/attendance', '/time-off', '/payroll', '/salary-config',
+]);
+
 const SEGMENT_LABELS: Record<string, string> = {
   dashboard: 'Reports',
   employees: 'Employees',
@@ -39,8 +50,8 @@ export function Breadcrumb() {
         return (
           <span key={path} style={{ display: 'contents' }}>
             {index > 0 && <span className="breadcrumb__sep">/</span>}
-            {isLast ? (
-              <span className="breadcrumb__current">{label}</span>
+            {isLast || !LINKABLE_PATHS.has(path) ? (
+              <span className={isLast ? 'breadcrumb__current' : 'breadcrumb__step'}>{label}</span>
             ) : (
               <Link to={path}>{label}</Link>
             )}
