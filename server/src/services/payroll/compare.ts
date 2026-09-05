@@ -28,7 +28,12 @@
 import type { TransactionClient } from '../../db/pool.ts';
 import { notFound } from '../../errors/app_error.ts';
 import { roundMoney } from '../../lib/money.ts';
-import { normaliseWage } from './contract_wage.ts';
+import type { WageType } from './contract_wage.ts';
+import {
+  copyContext,
+  DERIVED_CONTEXT_VALUES,
+  reconcileContext,
+} from './context_edits.ts';
 import { loadStructureRules } from './payslip_service.ts';
 import { computePayslip } from './rule_engine.ts';
 import type { PayslipContext, SalaryRuleDefinition } from './rule_engine.ts';
@@ -308,24 +313,8 @@ function compareLine(
 }
 
 /**
- * Inputs that are not inputs: each is fixed by others and cannot move alone.
- *
- * Paid days are scheduled days less unpaid leave; the monthly and hourly wages
- * are the contract wage normalised against the schedule. Treating them as
- * independent produced the worst number this screen has shown -- reverting the
- * scheduled day count on its own while paid days stayed put described a month
- * with 21 paid days out of 2 scheduled, and attributed 671,000 rupees to a
- * schedule change worth nothing of the sort.
- */
-export const DERIVED_INPUTS = new Set<string>([
-  'worked.paid_days',
-  'contract.monthly_wage',
-  'contract.hourly_wage',
-]);
-
-/**
  * One input put back to its previous value, with everything defined in terms of
- * it put back too.
+ * it put back too. See context_edits.ts for why that second half matters.
  *
  * Returns null for a name that is derived or unknown, so a caller cannot ask for
  * an incoherent context by accident.
@@ -334,16 +323,11 @@ export function revertInput(
   context: PayslipContext,
   name: string,
   value: number,
-  wageType: 'monthly' | 'hourly',
+  wageType: WageType,
 ): PayslipContext | null {
-  if (DERIVED_INPUTS.has(name)) return null;
+  if (DERIVED_CONTEXT_VALUES.has(name)) return null;
 
-  const next: PayslipContext = {
-    employee: { ...context.employee },
-    contract: { ...context.contract },
-    period: { ...context.period },
-    worked: { ...context.worked },
-  };
+  const next = copyContext(context);
 
   switch (name) {
     case 'employee.seniority_years': next.employee.seniority_years = value; break;
@@ -360,14 +344,7 @@ export function revertInput(
     default: return null;
   }
 
-  // Re-derive. Cheap enough to do unconditionally, and doing it unconditionally
-  // means a new derived value cannot be forgotten for one branch of the switch.
-  next.worked.paid_days = next.worked.scheduled_days - next.worked.unpaid_leave_days;
-  const wage = normaliseWage(next.contract.wage, wageType, next.contract.schedule_hours_per_week);
-  next.contract.monthly_wage = wage.monthly_wage;
-  next.contract.hourly_wage = wage.hourly_wage;
-
-  return next;
+  return reconcileContext(next, wageType);
 }
 
 /**

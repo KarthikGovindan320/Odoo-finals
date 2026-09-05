@@ -13,6 +13,9 @@
 /** Weeks per month, averaged over a year: 52 / 12. */
 const WEEKS_PER_MONTH = 52 / 12;
 
+/** The unit a contract states its wage in. */
+export type WageType = 'monthly' | 'hourly';
+
 export type NormalisedWage = {
   wage: number;
   monthly_wage: number;
@@ -27,7 +30,7 @@ export type NormalisedWage = {
  */
 export function normaliseWage(
   wage: number,
-  wageType: 'monthly' | 'hourly',
+  wageType: WageType,
   hoursPerWeek: number,
 ): NormalisedWage {
   const monthlyHours = hoursPerWeek * WEEKS_PER_MONTH;

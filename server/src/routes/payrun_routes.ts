@@ -14,10 +14,15 @@ import { createGuardedRouter } from './guarded_router.ts';
 import { requireOwnEmployee, scopedEmployeeId } from '../middleware/authorize.ts';
 import { parseOrThrow, validateBody } from '../middleware/validate.ts';
 import { identifier, paginationQuery } from '../../../shared/schemas/common.ts';
-import { payrunCreateInput, payrunScopeInput } from '../../../shared/schemas/payroll.ts';
+import {
+  payrunCreateInput,
+  payrunScenarioInput,
+  payrunScopeInput,
+} from '../../../shared/schemas/payroll.ts';
 import { computePayrun } from '../services/payroll/payslip_service.ts';
 import { explainPayslip } from '../services/payroll/explain.ts';
 import { comparePayslip } from '../services/payroll/compare.ts';
+import { simulatePayrun } from '../services/payroll/scenario.ts';
 import type { PayrunRow } from '../services/payroll/payslip_service.ts';
 import {
   createPayrun,
@@ -225,6 +230,26 @@ payruns.post('/:id/compute', 'payrun:write', async (request, response) => {
   );
 
   response.json(summary);
+});
+
+/**
+ * Prices a what-if against this payrun, writing nothing.
+ *
+ * Under payrun:write rather than payrun:read, and it is worth saying why for a
+ * route that only reads. The question this answers is "what would the whole
+ * payrun cost", which is a payroll-wide figure; payrun:read is also held by
+ * employees, scoped to their own records, and a scope check bolted onto this one
+ * route is the kind of guard that gets forgotten on the next one. payrun:write
+ * is held by exactly the three roles who plan payroll and by none with an 'own'
+ * scope, so the permission does the work instead of a condition inside the
+ * handler.
+ *
+ * Safe on a validated or paid payrun for the same reason it is fast: the engine
+ * is pure, and nothing here opens a transaction.
+ */
+payruns.post('/:id/simulate', 'payrun:write', validateBody(payrunScenarioInput), async (request, response) => {
+  const id = parseOrThrow(identifier, request.params.id);
+  response.json(await simulatePayrun({ query, queryOne }, id, request.body));
 });
 
 payruns.post('/:id/validate', 'payrun:validate', async (request, response) => {

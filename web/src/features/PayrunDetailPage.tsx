@@ -15,6 +15,7 @@ import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.t
 import { useAuth } from '../lib/auth.tsx';
 import { useBackTo } from '../lib/use_back_to.ts';
 import { Badge, ConfirmDialog, PAYROLL_WORKFLOW, Panel, StatusBar, WarningDigest } from '../components/Chrome.tsx';
+import { PayrunSimulator } from './PayrunSimulator.tsx';
 
 type PayrunDetail = {
   id: number; name: string; salary_structure_id: number;

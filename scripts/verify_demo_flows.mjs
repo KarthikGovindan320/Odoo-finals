@@ -587,3 +587,85 @@ if (own.body.rows?.[0] !== undefined) {
   check("and cannot see why anybody else's did",
     notTheirs.status === 403 || notTheirs.status === 404, `HTTP ${notTheirs.status}`);
 }
+
+console.log('\n=== FLOW 6: pricing a change without making it ===');
+/*
+ * The two things a simulator has to be: correct, and inert. Correct means the
+ * figures come from the rules rather than from scaling a total, which shows up
+ * as a raise not costing exactly what the percentage says. Inert means running
+ * one changes nothing -- and that is checked by comparing the payrun to itself
+ * before and after, not by reading the code and believing it.
+ */
+await call('POST', '/auth/login', {
+  email: 'payroll.manager@peoplepay360.local', password: 'Password123!',
+});
+
+const runsForSim = await call('GET', '/payruns?page_size=40');
+const biggest = runsForSim.body.rows
+  .reduce((best, run) => (run.payslip_count > (best?.payslip_count ?? 0) ? run : best), null)
+  ?? runsForSim.body.rows[0];
+
+const payrunBefore = await call('GET', `/payruns/${biggest.id}`);
+const beforeNet = payrunBefore.body.payslips.reduce((sum, slip) => sum + Number(slip.net_amount), 0);
+
+const nothing = await call('POST', `/payruns/${biggest.id}/simulate`, {});
+check('an empty scenario is priced as no change at all',
+  nothing.status === 200 && nothing.body.net_delta === 0
+    && nothing.body.projected.net === nothing.body.baseline.net,
+  `${nothing.body.baseline?.employees} employees, delta ${nothing.body.net_delta}`);
+
+const raise = await call('POST', `/payruns/${biggest.id}/simulate`, { wage_change_percent: 10 });
+check('a raise is priced across the whole payrun',
+  raise.status === 200 && raise.body.net_delta > 0,
+  `${raise.body.net_delta} on ${raise.body.baseline.employees} employees`);
+
+// The claim the feature exists to make. If these matched, the honest thing
+// would be to delete the simulator and multiply.
+const spreadsheet = raise.body.baseline.net * 1.1;
+check('the rules disagree with scaling the total, which is the point',
+  Math.abs(raise.body.projected.net - spreadsheet) > 1,
+  `rules ${raise.body.projected.net.toFixed(2)} vs scaling ${spreadsheet.toFixed(2)}`);
+
+check('the annual figure is twelve times the monthly one, on a monthly period',
+  raise.body.annualised_net_delta === null
+    || Math.abs(raise.body.annualised_net_delta - raise.body.net_delta * 12) < 0.02,
+  `${raise.body.annualised_net_delta}`);
+
+check('department totals account for the whole change',
+  Math.abs(raise.body.by_department.reduce((sum, row) => sum + row.net_delta, 0)
+    - raise.body.net_delta) < 0.05,
+  `${raise.body.by_department.length} departments`);
+
+// 31 rather than 60: the schema itself refuses more than a month, so asking for
+// 60 tests the validator, not the clamp. 31 is accepted and still more than any
+// period's scheduled days, which is what puts every employee against the bound.
+const leave = await call('POST', `/payruns/${biggest.id}/simulate`, {
+  unpaid_leave_days_delta: 31,
+});
+check('leave beyond the period is held at the period, and reported as held',
+  leave.body.clamped > 0 && leave.body.net_delta < 0,
+  `${leave.body.clamped} held at the limit, net ${leave.body.net_delta}`);
+
+const nonsense = await call('POST', `/payruns/${biggest.id}/simulate`, {
+  wage_change_percent: 5000,
+});
+check('a scenario outside what can be modelled is refused with a reason',
+  nonsense.status === 422 || nonsense.status === 400,
+  nonsense.body.error?.message?.slice(0, 60) ?? `HTTP ${nonsense.status}`);
+
+// Inert. Three simulations have now run against this payrun.
+const payrunAfter = await call('GET', `/payruns/${biggest.id}`);
+const afterNet = payrunAfter.body.payslips.reduce((sum, slip) => sum + Number(slip.net_amount), 0);
+check('simulating changed nothing about the payrun',
+  Math.abs(afterNet - beforeNet) < 0.005 && payrunAfter.body.state === payrunBefore.body.state,
+  `net ${beforeNet.toFixed(2)} before, ${afterNet.toFixed(2)} after; state ${payrunAfter.body.state}`);
+
+// A payroll-wide figure is not an employee's business, and the guard is the
+// permission rather than a condition inside the handler -- so it is worth
+// checking the permission really is the one that excludes them.
+await call('POST', '/auth/login', {
+  email: 'employee@peoplepay360.local', password: 'Password123!',
+});
+const simRefused = await call('POST', `/payruns/${biggest.id}/simulate`, { wage_change_percent: 10 });
+check('an employee cannot price a payroll-wide scenario',
+  simRefused.status === 403, `HTTP ${simRefused.status}`);

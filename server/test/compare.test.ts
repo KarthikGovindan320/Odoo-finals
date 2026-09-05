@@ -14,7 +14,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { DERIVED_INPUTS, revertInput } from '../src/services/payroll/compare.ts';
+import { revertInput } from '../src/services/payroll/compare.ts';
+import { DERIVED_CONTEXT_VALUES } from '../src/services/payroll/context_edits.ts';
 import { CONTEXT_VARIABLE_NAMES } from '../src/services/payroll/context_variables.ts';
 import { bindPayslipContext } from '../src/services/payroll/rule_engine.ts';
 import { normaliseWage } from '../src/services/payroll/contract_wage.ts';
@@ -39,7 +40,7 @@ describe('period comparison counterfactuals', () => {
     // that is missing from the list rather than wrong in it, which is the hardest
     // kind of error to notice on a screen.
     for (const name of CONTEXT_VARIABLE_NAMES) {
-      if (DERIVED_INPUTS.has(name)) continue;
+      if (DERIVED_CONTEXT_VALUES.has(name)) continue;
       assert.notEqual(
         revertInput(CONTEXT, name, 1, 'monthly'),
         null,
@@ -49,7 +50,7 @@ describe('period comparison counterfactuals', () => {
   });
 
   it('refuses to move a value that is fixed by other values', () => {
-    for (const name of DERIVED_INPUTS) {
+    for (const name of DERIVED_CONTEXT_VALUES) {
       assert.equal(revertInput(CONTEXT, name, 1, 'monthly'), null, name);
     }
   });

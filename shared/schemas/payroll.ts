@@ -124,6 +124,49 @@ export const payrunCreateInput = payrunScopeInput.safeExtend({
     .transform((ids) => [...new Set(ids)]),
 });
 
+/**
+ * A what-if scenario, priced against an existing payrun.
+ *
+ * Every lever names something the rule engine can actually read. That is the
+ * whole constraint, and it is what keeps the answer honest: a "bonus" field
+ * would have to invent a salary rule to spend it through, and the projection
+ * would then be about a payroll that does not exist. If a scenario cannot be
+ * expressed as a change to the inputs, it is a change to the rules, and the
+ * salary configuration screen is where that is made.
+ *
+ * Bounds are wide enough for any real decision and narrow enough that a typo
+ * cannot ask for a year of unpaid leave in a monthly period. Every lever
+ * defaults to nothing, so an empty body is the payrun as it stands.
+ */
+export const payrunScenarioInput = z.object({
+  wage_change_percent: z.number()
+    .min(-100, 'A wage cannot fall by more than 100%.')
+    .max(200, 'Try a rise of 200% or less.')
+    .default(0),
+  wage_change_amount: z.number()
+    .min(-10_000_000, 'That is a larger cut than this can model.')
+    .max(10_000_000, 'That is a larger rise than this can model.')
+    .default(0),
+  overtime_hours_delta: z.number()
+    .min(-400, 'Try a change of 400 hours or less.')
+    .max(400, 'Try a change of 400 hours or less.')
+    .default(0),
+  unpaid_leave_days_delta: z.number()
+    .min(-31, 'Try a change of 31 days or less.')
+    .max(31, 'Try a change of 31 days or less.')
+    .default(0),
+  paid_leave_days_delta: z.number()
+    .min(-31, 'Try a change of 31 days or less.')
+    .max(31, 'Try a change of 31 days or less.')
+    .default(0),
+  seniority_years_delta: z.number()
+    .int('Service is counted in whole years.')
+    .min(-50, 'Try a change of 50 years or less.')
+    .max(50, 'Try a change of 50 years or less.')
+    .default(0),
+});
+
+export type PayrunScenarioInput = z.infer<typeof payrunScenarioInput>;
 export type SalaryRuleInput = z.infer<typeof salaryRuleInput>;
 export type SalaryStructureInput = z.infer<typeof salaryStructureInput>;
 export type PayrunScopeInput = z.infer<typeof payrunScopeInput>;
