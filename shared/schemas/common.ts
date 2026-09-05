@@ -1,0 +1,63 @@
+/**
+ * Validation schemas shared by the server and the browser.
+ *
+ * One definition, imported by both, is the whole point. Odoo's stated bar is that
+ * an invalid email tells the user the email is invalid -- and the surest way for
+ * that to be true on both sides is for there to be only one rule to be true about.
+ * The server still validates independently; the client just gets the same answer
+ * sooner, in the same words.
+ */
+import { z } from 'zod';
+
+export const isoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'Enter a date as YYYY-MM-DD.')
+  .refine((value) => !Number.isNaN(Date.parse(`${value}T00:00:00Z`)), 'That is not a real date.');
+
+export const email = z
+  .string()
+  .trim()
+  .min(1, 'An email address is required.')
+  .email('That email address is not valid. It should look like name@example.com.');
+
+export const requiredText = (label: string, max = 200) =>
+  z.string().trim().min(1, `${label} is required.`).max(max, `${label} must be ${max} characters or fewer.`);
+
+export const optionalText = (max = 500) =>
+  z.string().trim().max(max, `Must be ${max} characters or fewer.`).optional().or(z.literal(''));
+
+export const positiveAmount = (label: string) =>
+  z.coerce
+    .number({ message: `${label} must be a number.` })
+    .positive(`${label} must be greater than zero.`)
+    .max(99_999_999, `${label} is unrealistically large.`);
+
+export const identifier = z.coerce
+  .number({ message: 'Expected a record id.' })
+  .int('Record ids are whole numbers.')
+  .positive('Record ids are positive.');
+
+export const optionalIdentifier = identifier.nullable().optional();
+
+/** Dates must be ordered. Used by contracts, allocations, leave and payruns. */
+export const orderedDates = <Shape extends { start: string; end?: string | null }>(
+  label: string,
+) =>
+  (value: Shape, ctx: z.RefinementCtx): void => {
+    if (value.end != null && value.end < value.start) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['end'],
+        message: `${label} cannot end before it starts.`,
+      });
+    }
+  };
+
+export const paginationQuery = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(200).default(25),
+  q: z.string().trim().max(120).optional(),
+  sort: z.string().trim().max(60).optional(),
+});
+
+export type Pagination = z.infer<typeof paginationQuery>;
