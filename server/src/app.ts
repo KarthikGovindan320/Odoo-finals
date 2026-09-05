@@ -14,6 +14,13 @@ import { authenticate } from './middleware/authenticate.ts';
 import { errorHandler } from './middleware/error_handler.ts';
 import { authRouter } from './routes/auth_routes.ts';
 import { employeeRouter } from './routes/employee_routes.ts';
+import { contractRouter } from './routes/contract_routes.ts';
+import { scheduleRouter } from './routes/schedule_routes.ts';
+import { attendanceRouter } from './routes/attendance_routes.ts';
+import { timeOffRouter } from './routes/time_off_routes.ts';
+import { salaryConfigRouter } from './routes/salary_config_routes.ts';
+import { payrunRouter, payslipRouter } from './routes/payrun_routes.ts';
+import { dashboardRouter } from './routes/dashboard_routes.ts';
 import { referenceRouter } from './routes/reference_routes.ts';
 
 /**
@@ -56,6 +63,14 @@ export function createApp(): Express {
 
   app.use('/api/v1/auth', authRouter);
   app.use('/api/v1/employees', employeeRouter);
+  app.use('/api/v1/contracts', contractRouter);
+  app.use('/api/v1/working-schedules', scheduleRouter);
+  app.use('/api/v1/attendance', attendanceRouter);
+  app.use('/api/v1/time-off', timeOffRouter);
+  app.use('/api/v1/salary', salaryConfigRouter);
+  app.use('/api/v1/payruns', payrunRouter);
+  app.use('/api/v1/payslips', payslipRouter);
+  app.use('/api/v1/dashboard', dashboardRouter);
   app.use('/api/v1/reference', referenceRouter);
 
   app.use((request: Request, _response: Response, next: NextFunction) => {
