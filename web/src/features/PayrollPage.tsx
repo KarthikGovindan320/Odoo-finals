@@ -7,7 +7,7 @@
  * into existence when Create Payrun is pressed.
  */
 import { useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
 import { useResource, type Page } from '../lib/use_resource.ts';
@@ -136,7 +136,7 @@ export function PayrollPage() {
       {employeeFilter !== '' && tab === 'payslips' && (
         <div className="alert alert--info">
           <span>Showing payslips for one employee only.</span>
-          <a href="/payroll?tab=payslips">Show everyone</a>
+          <Link to="/payroll?tab=payslips">Show everyone</Link>
         </div>
       )}
       {active.error !== null && <div className="error-box">{active.error}</div>}

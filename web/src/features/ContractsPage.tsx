@@ -7,7 +7,7 @@
  * error the user sees names the overlap rather than the constraint.
  */
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import type { FormEvent } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
@@ -104,7 +104,7 @@ export function ContractsPage() {
       {employeeFilter !== '' && (
         <div className="alert alert--info">
           <span>Showing contracts for one employee only.</span>
-          <a href="/contracts">Show all contracts</a>
+          <Link to="/contracts">Show all contracts</Link>
         </div>
       )}
       {error !== null && <div className="error-box">{error}</div>}

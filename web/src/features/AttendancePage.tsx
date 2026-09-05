@@ -6,7 +6,7 @@
  * it and why, so the audit trail cannot have a hole exactly where it matters.
  */
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import type { FormEvent } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
@@ -86,7 +86,7 @@ export function AttendancePage() {
       {employeeFilter !== '' && (
         <div className="alert alert--info">
           <span>Showing attendance for one employee only.</span>
-          <a href="/attendance">Show everyone</a>
+          <Link to="/attendance">Show everyone</Link>
         </div>
       )}
       {error !== null && <div className="error-box">{error}</div>}

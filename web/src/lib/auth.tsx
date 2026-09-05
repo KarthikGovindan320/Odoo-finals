@@ -34,6 +34,16 @@ type AuthState = {
 
 const AuthContext = createContext<AuthState | null>(null);
 
+/**
+ * The role segment shown in the address bar (e.g. /admin/employees). Purely
+ * cosmetic -- it comes from the session and is never treated as an access
+ * boundary, since every route still checks permissions server-side regardless
+ * of what the URL says.
+ */
+export function roleSlug(roleCode: string): string {
+  return roleCode.replace(/_/g, '-');
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,12 +65,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
     const response = await api.post<{ user: CurrentUser }>('/auth/login', { email, password });
-    setUser(response.user);
+    // A full navigation rather than setUser(): the role prefix in the address
+    // bar is decided once, before the router mounts, so switching roles has to
+    // go through a fresh load rather than a live basename swap.
+    window.location.assign(`/${roleSlug(response.user.role_code)}/`);
   }, []);
 
   const signOut = useCallback(async () => {
     await api.post('/auth/logout');
-    setUser(null);
+    window.location.assign('/');
   }, []);
 
   const value = useMemo<AuthState>(

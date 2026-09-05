@@ -422,6 +422,43 @@ a:hover { text-decoration: underline; }
   background: var(--surface-2);
 }
 
+/* ══ Splash ══════════════════════════════════════════════════════════════
+ * The very first screen an unrecognised browser sees, once, before login. It
+ * sits over an already-rendered login page and slides upward off it rather
+ * than fading, so dismissing it reads as an entrance into the product rather
+ * than a modal closing. */
+
+.splash {
+  position: fixed; inset: 0; z-index: 200;
+  display: grid; place-items: center; padding: var(--space-4);
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(11, 114, 133, 0.35), transparent 60%),
+    radial-gradient(900px 480px at 100% 115%, rgba(210, 154, 28, 0.20), transparent 58%),
+    linear-gradient(158deg, var(--ink-700) 0%, var(--ink-900) 58%, #0a2c2a 100%);
+  transition: transform 650ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+.splash--leaving { transform: translateY(-100%); }
+
+.splash__content {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-4);
+  max-width: 420px; text-align: center;
+}
+.splash__mark {
+  width: 68px; height: 68px; border-radius: var(--radius-lg);
+  background: linear-gradient(140deg, var(--accent) 0%, var(--petrol) 100%);
+  display: grid; place-items: center; box-shadow: var(--shadow-lg);
+  font-family: var(--font-mono); font-size: 22px; font-weight: 600; color: #fff;
+}
+.splash__name {
+  font-size: 26px; font-weight: 600; color: #fff; letter-spacing: var(--track-tight);
+  margin: 0;
+}
+.splash__quote {
+  font-size: var(--size-sm); font-style: italic; line-height: 1.6;
+  color: rgba(255, 255, 255, 0.68); margin: 0;
+}
+.splash__cta { margin-top: var(--space-2); padding: 9px var(--space-5); font-size: var(--size-base); }
+
 /* ══ Login ═══════════════════════════════════════════════════════════════ */
 
 .login {
@@ -571,7 +608,6 @@ a:hover { text-decoration: underline; }
   border-top: 1px solid rgba(255, 255, 255, 0.7); font-size: var(--size-sm);
 }
 .digest__list li { color: var(--text-2); }
-
 /* Inline filter, for toolbars that carry labelled controls. */
 .filter { display: flex; align-items: center; gap: var(--space-2); }
 .filter > span {

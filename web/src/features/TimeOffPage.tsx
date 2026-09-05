@@ -7,7 +7,7 @@
  * stored as a counter.
  */
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import type { FormEvent } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
@@ -85,7 +85,7 @@ export function TimeOffPage() {
       {employeeFilter !== '' && (
         <div className="alert alert--info">
           <span>Filtered to one employee.</span>
-          <a href={`/time-off?tab=${tab}`}>Show everyone</a>
+          <Link to={`/time-off?tab=${tab}`}>Show everyone</Link>
         </div>
       )}
 

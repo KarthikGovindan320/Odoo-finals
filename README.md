@@ -2,22 +2,16 @@
 
 An integrated HR and payroll platform: employee master data, contracts, working
 schedules, attendance, time off, a salary rules engine, payruns, payslip PDFs,
-bulk email delivery, and a dashboard that aggregates all of it live.
-
-Built for the Odoo Hackathon 2026 Grand Finale against the **PeoplePay360: HR &
-Payroll** problem statement.
+bulk email delivery and a dashboard — over a PostgreSQL schema that enforces the
+domain's temporal rules itself.
 
 ---
 
-## The problem, as we read it
+## The idea
 
-An employee's pay is not stored — it is **derived**, on a date, from a chain of
-records that each change over time. The platform's job is to make that
+An employee's pay is not stored. It is **derived**, on a date, from a chain of
+records that each change over time — and the job of this system is to make that
 derivation correct, explainable, and permanently frozen once money moves.
-
-That reading drove every significant decision below. The full analysis, the ERD,
-the ambiguities we resolved and the questions we would put to a mentor are in
-**[`plan.md`](plan.md)**, written before any code existed.
 
 ```
 employee  →  contract valid for the period      →  wage + salary structure
@@ -34,42 +28,19 @@ employee  →  contract valid for the period      →  wage + salary structure
                         ↓
              warnings → validate → mark paid → PDF → email
                         ↓
-             frozen history; the dashboard aggregates over it
+             frozen history, aggregated live by the reporting endpoints
 ```
-
----
-
-## Stack, and why
-
-| Layer | Choice | Reasoning |
-|---|---|---|
-| Database | **PostgreSQL 16, run locally** | Chosen for features we actually use: `daterange`, `EXCLUDE USING gist`, generated columns, partial unique indexes. This problem is *made of* range overlaps and ordered computation. |
-| DB access | **`pg` driver + hand-written SQL** | No ORM. Database design is the highest-weighted criterion and an ORM hides exactly the artefact being graded. Every query in the repo is one we can explain. |
-| Migrations | **Numbered `.sql` + a 90-line runner we wrote** | Forward-only, checksummed, each in its own transaction. Short enough to read in one sitting; one fewer tool in the story. |
-| Backend | **Node 24 + TypeScript, run natively** | Node 24 executes `.ts` directly — no build step, no bundler, no `ts-node`. Static types at zero tooling cost and no build to break at hour 22. |
-| API | **Express 5** | The smallest thing that routes. Express 5 forwards async errors natively, so there is no `asyncHandler` wrapper. |
-| Auth | **Opaque session tokens in Postgres** | Not JWT. Revocable, no signing key to leak, and only the SHA-256 hash is stored. Hashing uses `node:crypto` scrypt — zero auth dependencies. |
-| Validation | **Zod, in `shared/`, imported by both sides** | One definition means the browser's message and the server's message are the same string rather than two that drift. |
-| Formula evaluation | **Our own lexer → Pratt parser → evaluator** | No `eval`, no `new Function`, no library. ~250 lines, 34 tests. See below. |
-| Frontend | **React 19 + Vite + React Router** | Standard and fast. No state library — this app's server state is shallow. |
-| Styling | **Hand-written CSS with design tokens** | Odoo's real tokens describe a *dense* UI that component libraries fight. Seven primitives we wrote make every list and form behave identically. |
-| Charts | **Hand-drawn inline SVG** | Two chart shapes are all the dashboard needs; keeps the palette identical and removes a dependency. |
-| PDF | **PDFKit** | Pure JS, no headless browser. Generating 60 payslips for a bulk send is the same code path as printing one. |
-| Email | **Nodemailer → Mailpit** | Real SMTP, real MIME, real attachments, **no third-party mail provider**. Works with the network unplugged. |
-| Tests | **`node:test`** | Built in. No Jest, no config. |
-
-**Nine production dependencies:** `express`, `pg`, `zod`, `pdfkit`, `nodemailer`,
-`react`, `react-dom`, `react-router`, `vite`.
 
 ---
 
 ## Where the interesting engineering is
 
-### 1. Temporal integrity, enforced by the schema
+### Temporal integrity lives in the schema
 
-The spec requires payroll use only the contract valid for the period and forbids
-concurrent active contracts. That is a temporal integrity rule, so it is declared
-in the database rather than left to a validator someone can forget to call:
+Payroll must use only the contract valid for the period being paid, and an
+employee must never have two contracts in force at once. That is a temporal
+integrity rule, so it is declared in the database rather than left to a
+validator someone can forget to call:
 
 ```sql
 validity daterange GENERATED ALWAYS AS (daterange(start_date, end_date, '[]')) STORED,
@@ -80,22 +51,22 @@ CONSTRAINT contract_no_overlap EXCLUDE USING gist (
 ) WHERE (state IN ('running', 'expired'))
 ```
 
-The `WHERE` predicate is the part that makes it usable: exclusivity applies to
-contracts that are *real*, so HR can prepare a replacement while the outgoing one
-still runs. Two more exclusion constraints do the same job for attendance (nobody
-is in two places at once) and approved leave.
+The `WHERE` predicate is what makes it usable: exclusivity applies to contracts
+that are *real*, so HR can prepare a replacement while the outgoing one still
+runs. Two further exclusion constraints do the same job for attendance — nobody
+is in two places at once — and for approved leave.
 
-Derived time is computed by the database too — `worked_minutes` per schedule line
+Derived time is computed by the database too. `worked_minutes` per schedule line
 and `worked_hours` per attendance record are generated columns, and a schedule's
-weekly hours are maintained by a trigger over its lines. The spec says weekly
-hours must be calculated, never typed in; here there is no column to type into.
+weekly hours are maintained by a trigger over its lines. Weekly hours are never
+accepted from a client, because there is no column to accept them into.
 
-### 2. A salary rules engine, not a formula column
+### A salary rules engine, not a formula column
 
-Rules execute in sequence, and the sequence is a **dependency declaration**: rule
-*n* may read the results of rules *1…n−1* and nothing later. Results become
+Rules execute in sequence, and the sequence is a **dependency declaration**:
+rule *n* may read the results of rules *1…n−1* and nothing later. Results become
 visible under two namespaces, which is what lets a Gross rule read
-`categories.ALW` without knowing which allowances a structure contains.
+`categories.ALW` without knowing which allowances a structure happens to contain.
 
 The seeded *Regular Salary* structure exercises every computation type:
 
@@ -108,25 +79,34 @@ The seeded *Regular Salary* structure exercises every computation type:
 | 50 | `GROSS` | GROSS | formula | `categories.BASIC + categories.ALW` |
 | 60 | `PF` | DED | formula | `min(rules.BASIC * 0.12, 1800)` |
 | 70 | `PT` | DED | fixed | 200 |
-| 80 | `LWP` | DED | formula | unpaid leave → loss of pay |
+| 80 | `LWP` | DED | formula | unpaid leave becomes loss of pay |
 | 90 | `NET` | NET | formula | `categories.GROSS - categories.DED` |
 
-`LWP` is the line that makes the second demo flow land: allocate leave → request
-→ approve → the deduction appears on the payslip. One number, four modules.
+The engine is pure — rules in, lines out, no database — so it is testable on its
+own and reusable for a rule-preview feature.
 
-### 3. No `eval`, structurally
+Every rule's result is rounded to two decimals the moment it is computed, and the
+rounded value is what later rules read. Rounding once at the end instead would
+let the printed lines fail to sum to the printed total, which is the one failure
+a payslip cannot survive.
 
-Salary rules are text a user types into a configuration screen. The evaluator
-resolves variables from a **flat `Map`** of dotted names to numbers — not an
+### No `eval`, structurally
+
+Salary rules are text a user types into a configuration screen, and this is the
+module that stops that text from becoming executable JavaScript. There is no
+`eval`, no `new Function`, no `vm`, and no property access on any host object.
+
+Variables resolve from a **flat `Map`** of dotted names to numbers, not from an
 object graph. There is no traversal to hijack, so `constructor.constructor` and
-`__proto__.x` are not dangerous constructs needing a blocklist; they are keys
+`__proto__.x` are not dangerous constructs needing a blocklist — they are keys
 nobody put in the Map, and they fail as ordinary unknown-variable typos. The test
-suite asserts exactly that for six known eval escapes.
+suite asserts exactly that for six known escapes.
 
 Parsing enforces a 200-node and 32-depth budget, so a pathological expression
-costs bounded work before evaluation begins.
+costs bounded work before evaluation begins. `if()` and the boolean operators
+short-circuit, so a guarded division never evaluates its untaken branch.
 
-### 4. Finalized payroll is immutable, below the application
+### Finalized payroll is immutable, below the application
 
 `payslip_lines` snapshot the rule code, name, category and the expression that was
 evaluated, so reading a September payslip never touches October's configuration.
@@ -134,7 +114,11 @@ Triggers then refuse to change lines or header money once validated, permitting
 only the `validated → paid` transition. Application code could enforce this; the
 database enforcing it means a bug in application code *cannot* rewrite history.
 
-### 5. Role-based access that survives a curious URL
+Duplicate payslips across runs are a warning while everything is draft, and a
+partial unique index makes them impossible at the moment of finalization.
+Warnings are for humans; constraints are for money.
+
+### Access control that survives a curious URL
 
 Authorisation answers two questions, and answering only the first is the classic
 failure: *may this role touch the resource*, and *which rows are theirs*. A role
@@ -143,77 +127,121 @@ so an Employee listing employees gets **one row from the database**, not sixty
 rows filtered afterwards.
 
 Routes are registered through a guarded router with no overload that omits a
-permission, making "every protected route is checked" a property of the type
-system rather than a rule to remember.
+permission code, which makes "every protected route is checked" a property of the
+type system rather than a rule to remember.
 
-Verified live: unauthenticated → 401; an Employee sees only their own record; the
-same Employee editing the id in the URL → 403 with a message saying why; HR
-Manager sees all 60 and has no payroll access at all.
+Verified against seeded data: unauthenticated is 401; an Employee sees only their
+own record; the same Employee editing the id in the URL gets 403 with a message
+saying why; an HR Manager sees every employee and has no payroll reach at all.
 
 ---
 
-## Schema
+## Stack, and why
 
-Full ERD with columns, types and constraints: **[`plan.md`](plan.md#the-data-model)**.
+| Layer | Choice | Reasoning |
+|---|---|---|
+| Database | **PostgreSQL 16** | Chosen for features actually used here: `daterange`, `EXCLUDE USING gist`, generated columns, partial unique indexes. This domain is made of range overlaps and ordered computation. |
+| DB access | **`pg` driver, SQL written directly** | No ORM. The schema is the most important artefact in the project, and an ORM hides it. Every query in the repository is one that can be explained. |
+| Migrations | **Numbered `.sql` files + a small runner** | Forward-only, checksummed, each applied in its own transaction. Editing an applied migration fails loudly rather than letting two machines diverge silently. |
+| Runtime | **Node 24 + TypeScript, executed natively** | Node runs `.ts` directly — no build step, no bundler, no `ts-node`. Static types at zero tooling cost and no build to break under pressure. |
+| API | **Express 5** | The smallest thing that routes. Express 5 forwards async errors natively, so there is no `asyncHandler` wrapper anywhere. |
+| Auth | **Opaque session tokens in Postgres** | Not JWT. Revocable, no signing key to leak, and only the SHA-256 hash is stored. Password hashing uses `node:crypto` scrypt, so there are no auth dependencies and nothing to compile at install time. |
+| Validation | **Zod schemas in `shared/`** | One definition the API and any client can both import, so an invalid email produces the same sentence on both sides rather than two that drift. |
+| Formulas | **A purpose-built lexer, Pratt parser and evaluator** | See above. ~250 lines, 34 tests. |
+| PDF | **PDFKit** | Pure JS, no headless browser. Generating sixty payslips for a bulk send is the same code path as printing one. |
+| Email | **Nodemailer → Mailpit** | Real SMTP, real MIME, real attachments, and no third-party mail provider. Works with the network unplugged. |
+| Client | **React 19 + Vite + React Router** | Standard and fast. No state library — this application's server state is shallow, and forty lines of fetching hook beats a cache whose semantics would need defending. |
+| Styling | **CSS against design tokens, with our own primitives** | No component library. Seven primitives — table, toolbar, field, status bar, smart button, panel, badge — make every list and form behave identically across all six modules. |
+| Charts | **SVG drawn directly** | Two chart shapes are all the dashboard needs; it keeps the palette identical to the rest of the interface and removes a dependency. |
+| Tests | **`node:test`** | Built into the runtime. No test framework, no configuration. |
+
+Nine production dependencies: `express`, `pg`, `zod`, `pdfkit`, `nodemailer`,
+`react`, `react-dom`, `react-router`, `vite`.
+
+---
+
+## Data model
 
 27 tables · 5 views · 3 exclusion constraints · 160+ constraints · 90+ indexes · 11 triggers
 
 ```mermaid
-graph LR
-    subgraph Identity["Identity & access"]
-        R[roles] --> U[users]
-        P[permissions] --- RP[role_permissions]
-        RP --- R
-    end
-    subgraph Master["HR master data"]
-        E[employees]
-        C[contracts]
-        WS[working_schedules]
-    end
-    subgraph Ops["Operations"]
-        A[attendance_records]
-        AL[time_off_allocations]
-        TR[time_off_requests]
-        TRA[time_off_consumptions]
-    end
-    subgraph Pay["Payroll"]
-        SS[salary_structures]
-        SR[salary_rules]
-        PR[payruns]
-        PS[payslips]
-        PL[payslip_lines]
-        PW[payslip_warnings]
-    end
-    U --> E
-    E --> C
-    C --> SS
-    E --> A
-    E --> TR
-    E --> AL
-    TR --> TRA
-    AL --> TRA
-    SR --> SS
-    PR --> PS
-    E --> PS
-    C --> PS
-    PS --> PL
-    PS --> PW
-    WS --> E
-    WS --> C
-    AUD[audit_log] -.covers.-> Master
-    AUD -.covers.-> Ops
-    AUD -.covers.-> Pay
+erDiagram
+    roles ||--o{ users : assigned_to
+    roles ||--o{ role_permissions : grants
+    permissions ||--o{ role_permissions : granted_by
+    users |o--o| employees : "is"
+    users ||--o{ sessions : owns
+
+    departments ||--o{ employees : employs
+    job_positions ||--o{ employees : held_by
+    employment_types ||--o{ employees : classifies
+    working_schedules ||--o{ working_schedule_lines : "defined by"
+    working_schedules ||--o{ employees : "default for"
+
+    employees ||--o{ contracts : "priced by"
+    employees ||--o{ attendance_records : records
+    employees ||--o{ time_off_allocations : receives
+    employees ||--o{ time_off_requests : submits
+
+    time_off_types ||--o{ time_off_allocations : grants
+    time_off_types ||--o{ time_off_requests : typed_as
+    time_off_allocations ||--o{ time_off_consumptions : "drawn from"
+    time_off_requests ||--o{ time_off_consumptions : draws
+
+    salary_rule_categories ||--o{ salary_rules : classifies
+    salary_structures ||--o{ salary_structure_rules : includes
+    salary_rules ||--o{ salary_structure_rules : included_in
+    salary_structures ||--o{ contracts : "default on"
+    salary_structures ||--o{ payruns : "applied by"
+
+    payruns ||--o{ payslips : batches
+    contracts ||--o{ payslips : "priced by"
+    payslips ||--o{ payslip_lines : "broken down into"
+    payslips ||--o{ payslip_warnings : flags
+    payslips ||--o{ email_deliveries : "sent as"
+
+    contracts {
+        bigint id PK
+        bigint employee_id FK
+        date start_date
+        date end_date "nullable = open-ended"
+        daterange validity "GENERATED; EXCLUDE gist prevents overlap"
+        numeric wage
+        smallint salary_structure_id FK
+        text state "draft | running | expired | cancelled"
+    }
+    time_off_consumptions {
+        bigint id PK
+        bigint time_off_request_id FK
+        bigint time_off_allocation_id FK
+        numeric amount "balance is allocated minus this, never stored"
+    }
+    payslip_lines {
+        bigint id PK
+        bigint payslip_id FK
+        text rule_code "SNAPSHOT"
+        text category_code "SNAPSHOT"
+        text source_expression "SNAPSHOT of what was evaluated"
+        numeric amount "immutable once the payslip is validated"
+    }
 ```
+
+`time_off_consumptions` is the table worth pointing at. Leave balance is never
+stored as a counter — it is `allocated − SUM(consumed)`, so a request spanning
+two allocations produces two visible rows, and refusing a previously approved
+request restores the balance by deleting them, with no compensating update to get
+wrong.
 
 ---
 
 ## Running it
 
-Requires **PostgreSQL 16+** and **Node 22.6+** (24 recommended). Docker is optional
-but gives you the mail sink.
+Requires **PostgreSQL 16+** and **Node 22.6+** (24 recommended). Docker is
+optional and provides the mail sink.
 
 ```bash
-git clone <repo> && cd peoplepay360
+git clone <repo>
+cd peoplepay360
 npm install
 
 cp .env.example .env          # adjust PGUSER / PGPASSWORD for your machine
@@ -221,116 +249,147 @@ createdb peoplepay360
 
 docker compose up -d mailpit  # optional: SMTP sink at http://localhost:8025
 
-npm run db:migrate            # apply migrations
-npm run db:seed               # seed a realistic company
+npm run db:migrate
+npm run db:seed
 
-npm run dev:server            # API   → http://localhost:4000
-npm run dev:web               # UI    → http://localhost:5173
+npm run dev:server            # API → http://localhost:4000
+npm run dev:web               # UI  → http://localhost:5173
 ```
 
-Or bring the whole thing up with `docker compose up`.
+The dev server proxies `/api` to the backend, so the session cookie stays
+first-party and no CORS negotiation is needed in development.
 
-### Sign in
+### Seeded data
+
+60 employees · 84 contracts, a third of them with more than one so contract
+history is non-trivial · ~4,800 attendance records including deliberate late
+arrivals, absences, forgotten check-outs and authorised corrections · 225
+allocations · 202 leave requests · three months of finalized payroll, produced by
+running the real engine rather than by inserting numbers.
+
+Two employees have no bank details on purpose, so the `MISSING_BANK` warning
+fires against real data.
 
 All demo accounts share the password `Password123!`:
 
-| Email | Role | What they can reach |
-|---|---|---|
-| `admin@peoplepay360.local` | Admin | Everything, plus user management |
-| `payroll.manager@peoplepay360.local` | HR Payroll Manager | All HR and payroll, including salary rules |
-| `payroll.user@peoplepay360.local` | HR Payroll User | Payroll records; salary config read-only |
-| `hr.manager@peoplepay360.local` | HR Manager | All HR — **no payroll at all** |
-| `employee@peoplepay360.local` | Employee | Own records only |
-
-Signing in as two different roles and comparing what the top navigation offers is
-the fastest way to see the permission model is real.
-
-### What the seed contains
-
-60 employees · 84 contracts (a third have more than one, so contract history is
-non-trivial) · ~4,800 attendance records with deliberate lates, absences,
-forgotten check-outs and manual corrections · 225 allocations · 202 leave
-requests · 3 months of finalized payroll produced by the real engine.
-
-Two employees have no bank details **on purpose**, so the `MISSING_BANK` warning
-fires during the demo rather than being described.
+| Email | Role |
+|---|---|
+| `admin@peoplepay360.local` | Admin — everything, plus user management |
+| `payroll.manager@peoplepay360.local` | HR Payroll Manager — payroll and salary rules |
+| `payroll.user@peoplepay360.local` | HR Payroll User — payroll; config read-only |
+| `hr.manager@peoplepay360.local` | HR Manager — HR only, no payroll |
+| `employee@peoplepay360.local` | Employee — own records only |
 
 ### Commands
 
 ```bash
 npm test              # 66 unit tests: expression evaluator, rules engine,
                       # leave consumption, row-level authorisation
-npm run typecheck     # tsc --noEmit across server, web, shared and db
-npm run verify:flows  # drives both demo flows over real HTTP (23 checks)
+npm run typecheck     # tsc --noEmit across server, shared and db
+npm run verify:flows  # drives both end-to-end flows over real HTTP (23 checks)
 npm run db:reset      # rebuild the schema and reseed from scratch
 ```
 
----
-
-## The two demo flows
-
-**Employee → payslip.** Employees → open a record → smart buttons to contracts,
-attendance, time off → Payroll → New payrun → step 1 scope, step 2 employee
-selection → Create → Compute → read the warnings → Validate → Mark paid → open a
-payslip → Print PDF → Send payslips → open Mailpit and watch them arrive.
-
-**Leave allocation → request → approved → reflected in payroll.** Time Off →
-Allocations → grant and approve → Requests → create an *unpaid* request → Approve
-→ watch the balance move and see which allocation it drew from → run a payrun for
-that period → the `LWP` deduction appears on the payslip, and basic pay is
-prorated.
+`verify:flows` needs the API running. It reserves fresh payroll periods from live
+history on each run, so it is safe to run repeatedly.
 
 ---
 
-## What we would build next
+## API surface
 
-- **Payslip segments for a mid-period contract change.** Today we price on the
-  contract in force at period end and warn that a change happened. The honest
-  version splits the payslip into two prorated segments; the schema already
-  supports it (`payslip_lines` would carry their own `contract_id`).
-- **Retroactive adjustment as a first-class record.** Approving leave for a period
-  already paid currently surfaces as a dashboard alert. A real system issues a
-  correction on the next payrun that references the original.
-- **Materialized dashboard aggregates with a refresh policy**, once payroll
-  history outgrows what plain views serve comfortably.
-- **Rule preview**: run a structure against one employee and show the lines before
-  committing a configuration change. The engine is already pure, so this is a
-  screen rather than a rewrite.
-- **Hourly-wage contracts** end to end. The column exists; the engine branch does not.
-
----
-
-## Repository layout
+All routes are under `/api/v1`, return snake_case JSON matching the schema, and
+sit behind authentication plus a permission check.
 
 ```
-db/           migrations (forward-only), seed modules, migration runner
-shared/       zod schemas imported by BOTH server and web
+POST   /auth/login · POST /auth/logout · GET /auth/me
+
+GET    /employees                    ?q&department_id&status&employment_type_id&page&sort
+GET    /employees/:id                includes smart-button counts in one round trip
+POST   /employees · PATCH /employees/:id · DELETE /employees/:id
+
+CRUD   /contracts · /working-schedules · /attendance
+PATCH  /attendance/:id               requires attendance:correct and a reason
+
+CRUD   /time-off/types · /time-off/allocations · /time-off/requests
+POST   /time-off/requests/:id/approve | /refuse    ← consumption happens here
+POST   /time-off/allocations/:id/approve
+GET    /time-off/balances?employee_id
+
+CRUD   /salary/structures · /salary/rules          ← read-only for hr_payroll_user
+POST   /payruns/eligible-employees                 ← preview; creates nothing
+POST   /payruns
+POST   /payruns/:id/compute | /validate | /mark-paid | /send-payslips
+GET    /payslips · /payslips/:id · /payslips/:id/pdf
+
+GET    /dashboard?period_start&period_end&department_id&employment_type_id
+```
+
+The payrun endpoints are split deliberately: choosing a scope and choosing
+employees are both client state, `/payruns/eligible-employees` is a read-only
+preview, and the batch only comes into existence on `POST /payruns` — which
+re-checks the selection server-side, because the list the client saw could be
+minutes old and a payslip for someone already paid is an expensive mistake.
+
+---
+
+## Layout
+
+```
+db/
+  migrations/     forward-only, numbered, checksummed
+  seeds/          reference data, people, operations, payroll history
+  migrate.ts      the runner
+shared/
+  schemas/        zod schemas shared with any client
 server/src/
-  routes/       HTTP only — parse, call a service, shape a response
-  services/     business logic, zero express imports
-    payroll/      rule_engine · contract_resolver · warnings · expression/
-  repositories/ SQL only, zero business logic
-  middleware/   authenticate · authorize · validate · error_handler
+  routes/         HTTP only — parse, call a service, shape a response
+  services/       business logic, zero express imports
+    payroll/        rule_engine · contract_resolver · context_builder · warnings
+      expression/     lexer · parser · evaluator
+    time_off/       consumption
+  repositories/   SQL only, zero business logic
+  middleware/     authenticate · authorize · validate · error_handler
+  pdf/ · mail/ · errors/ · lib/
+  test/
 web/src/
-  components/   the seven shared primitives
-  features/     one folder-free page per module
-  lib/          api client, auth context, formatters
-scripts/      verify_demo_flows.mjs — both flows over real HTTP
+  app/            router, shell, breadcrumb
+  components/     the shared primitives
+  features/       one page per module
+  lib/            api client, auth context, formatters
+  styles/         tokens.css, base.css
+scripts/          verify_demo_flows.mjs
 ```
 
-Three-layer rule, stated so four people obey it: **routes** know HTTP and nothing
-else; **services** know business rules and nothing about HTTP; **repositories**
-know SQL and nothing about business rules.
+Three layers, stated so they stay honest: **routes** know HTTP and nothing else;
+**services** know business rules and nothing about HTTP; **repositories** know SQL
+and nothing about business rules.
+
+### Interface
+
+The design is drawn from the artifact the product exists to produce. A payslip is
+an accounting document, so colour is semantic rather than decorative: earnings run
+petrol-blue and ochre, a subtotal is structural so it takes slate, deductions are
+brick, and net pay is the only green on the page. An accountant reads the column
+before the number, and the colour is that column.
+
+Navigation is filtered by permission so a role never sees a menu that would 403 —
+an HR Manager, who has no payroll access, has no Payroll menu. That is
+presentation only; the server re-checks every route independently.
 
 ---
 
-## Team
+## What would come next
 
-| Member | Owned |
-|---|---|
-| _(fill in)_ | Schema, migrations, contract resolution |
-| _(fill in)_ | Rules engine, expression evaluator, payrun lifecycle |
-| _(fill in)_ | Design system, employee and time-off screens |
-| _(fill in)_ | Payroll screens, dashboard, PDF and mail |
-
-Every member commits their own work and presents the part they built.
+- **Payslip segments for a mid-period contract change.** Today pay is priced on
+  the contract in force at period end, with a warning that a change happened. The
+  fuller version splits the payslip into two prorated segments; the schema already
+  supports it.
+- **Retroactive adjustment as a first-class record.** Approving leave for a period
+  already paid currently surfaces as an alert. A complete system issues a
+  correction on the next payrun that references the original.
+- **Materialized dashboard aggregates** with a refresh policy, once payroll
+  history outgrows what plain views serve comfortably.
+- **Rule preview** — run a structure against one employee and show the lines
+  before committing a configuration change. The engine is already pure, so this is
+  an endpoint rather than a rewrite.
+- **Hourly-wage contracts** end to end. The column exists; the engine branch does not.

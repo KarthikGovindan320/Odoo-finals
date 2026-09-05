@@ -5,9 +5,12 @@
  * would 403 -- HR Manager, which the spec gives no payroll access at all, simply
  * has no Payroll menu. The server enforces the same boundary independently.
  */
+import { useState } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router';
 
 import { useAuth } from '../lib/auth.tsx';
+import { hasSeenSplash, markSplashSeen } from '../lib/splash.ts';
+import { SplashScreen } from '../features/SplashScreen.tsx';
 import { LoginPage } from '../features/LoginPage.tsx';
 import { DashboardPage } from '../features/DashboardPage.tsx';
 import { EmployeesPage } from '../features/EmployeesPage.tsx';
@@ -35,15 +38,24 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 export function App() {
-  const { user, loading, signOut, can } = useAuth();
+  const { user, signOut, can } = useAuth();
   const location = useLocation();
-
-  if (loading) {
-    return <div className="loading">Loading PeoplePay360…</div>;
-  }
+  const [showSplash, setShowSplash] = useState(() => !hasSeenSplash());
 
   if (user === null) {
-    return <LoginPage />;
+    return (
+      <>
+        <LoginPage />
+        {showSplash && (
+          <SplashScreen
+            onContinue={() => {
+              markSplashSeen();
+              setShowSplash(false);
+            }}
+          />
+        )}
+      </>
+    );
   }
 
   const visibleNav = NAV_ITEMS.filter((item) => can(item.permission));
