@@ -855,6 +855,16 @@ The spec does not define everything. Every gap I filled is recorded here with wh
 *Chosen:* a type's `unit` governs its allocations, requests and consumption end to end; we do not convert between units. Payroll converts to days at the boundary using the schedule's daily hours, and only there.
 *Why:* unit conversion scattered through the code is where leave systems rot. One conversion point, in the payroll service, is auditable.
 
+**17. How long does an unclosed attendance punch block the employee?** *(Decided during the build, migration 013.)*
+*Ambiguous:* the spec asks for attendance exceptions including missing check-outs, but says nothing about what an open punch means for subsequent records.
+*Chosen:* an unclosed punch counts as lasting at most **12 hours** for overlap purposes, held in a trigger-maintained `presence_end` column that the exclusion constraint indexes.
+*Why:* the first implementation treated a missing check-out as running to `'infinity'`, which is right for a live session and wrong for history — one forgotten check-out would block every future punch for that employee until an administrator intervened, turning a clerical slip into a lockout, and making a three-month-old unclosed record impossible to represent at all. Twelve hours is longer than any schedule we run, so the constraint still catches what it exists for (two overlapping punches on one day, which would double-count worked hours) while letting the exception sit in history as an exception. It lives in a trigger-maintained column because `timestamptz + interval` is only `STABLE`, and an index expression must be `IMMUTABLE` — the same reason `working_schedules.hours_per_week` is trigger-maintained.
+
+**18. Two consecutive contracts touching one period is not an error.** *(Refinement of #2, found by running the seed.)*
+*Ambiguous:* #2 settled what to *pay*; it did not say what to call the situation.
+*Chosen:* the resolver picks the contract in force on the **last day of the period**, records the superseded contract by reference in a `PARTIAL_CONTRACT` warning, and reserves the `MULTIPLE_CONTRACTS` blocker for two contracts genuinely in force at the same instant — which it still checks for pairwise, even though the exclusion constraint makes it impossible.
+*Why:* the first implementation treated any second overlapping row as ambiguous and blocked the payslip, which fired on eight perfectly normal promotions in the seed data. A contract change mid-period is routine; simultaneity is the thing that is actually wrong. Keeping the impossible case as an assertion rather than deleting it is deliberate: a constraint we rely on is one worth checking, and if it ever fires we want to see it rather than silently pick a row.
+
 ---
 
 ## Questions to clarify with the Odoo representative guides
