@@ -728,36 +728,68 @@ a:hover { text-decoration: underline; }
 }
 .punch__state { flex: 1; min-width: 200px; font-size: var(--size-sm); }
 
-/* Searchable employee picker. */
-.picker {
-  margin-top: var(--space-2);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  max-height: 190px;
-  overflow-y: auto;
+/* ---------------------------------------------------------------------------
+   Employee combobox
+   ---------------------------------------------------------------------------
+   Reads as a select and behaves as one, with a search underneath. The closed
+   control borrows .select outright so it lines up with the real selects beside
+   it in the same form -- same height, same border, same focus ring -- and the
+   popover is absolutely positioned so opening it does not push the rest of the
+   form down the page. */
+
+.combo { position: relative; }
+
+.combo__control {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2);
+  text-align: left; cursor: pointer;
+}
+.combo__control--empty .combo__value { color: var(--text-3); }
+.combo__value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The same wedge a native select draws, so the control does not have to be
+   clicked to find out it opens something. */
+.combo__caret {
+  flex: none; width: 0; height: 0;
+  border-inline: 4px solid transparent;
+  border-block-start: 5px solid var(--text-3);
+}
+
+/* Wider than the field it hangs from. The form lays these out in ~230px
+   columns, and a number and a full name do not fit in that -- constrained to the
+   control's width, every row wrapped onto two lines and the footer was clipped. */
+.combo__popover {
+  position: absolute; z-index: 30; inset-inline-start: 0; top: calc(100% + 4px);
+  min-width: 100%; width: 310px; max-width: min(310px, 90vw);
   background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: var(--space-2);
 }
-.picker__empty {
-  padding: var(--space-3);
-  color: var(--text-3);
-  font-size: var(--size-sm);
+.combo__search { margin-bottom: var(--space-2); }
+
+.combo__list { max-height: 208px; overflow-y: auto; }
+.combo__empty { padding: var(--space-3); color: var(--text-3); font-size: var(--size-sm); }
+
+/* Two columns rather than a flex row: the numbers are a fixed shape, so giving
+   them their own column lines them up and leaves the name a predictable width to
+   be truncated in rather than wrapped. */
+.combo__option {
+  display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: var(--space-2);
+  align-items: baseline; width: 100%;
+  padding: var(--space-2);
+  border: 0; border-radius: var(--radius-sm);
+  background: none; text-align: left; font: inherit; cursor: pointer;
 }
-.picker__option {
-  display: flex;
-  gap: var(--space-3);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  border-bottom: 1px solid var(--line-soft);
-  background: none;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
+.combo__option > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.combo__option--active { background: var(--surface-2); }
+.combo__option--selected { background: var(--accent-wash); font-weight: 600; }
+.combo__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.combo__footer {
+  margin-top: var(--space-2); padding-top: var(--space-2);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--size-xs); color: var(--text-3);
 }
-.picker__option:last-child { border-bottom: 0; }
-.picker__option:hover { background: var(--surface-2); }
-.picker__option:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.picker__option--selected { background: var(--accent-wash); font-weight: 600; }
 
 /* The formula variable reference on the salary rule form. */
 .reference-block {
