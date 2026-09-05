@@ -24,7 +24,7 @@ import { dashboardRouter } from './routes/dashboard_routes.ts';
 import { referenceRouter } from './routes/reference_routes.ts';
 
 /**
- * Hand-rolled CORS. The `cors` package is fifty lines of configuration handling
+ * A minimal CORS layer. The `cors` package is fifty lines of configuration handling
  * for what is, at one known origin with credentials, four headers. Reflecting a
  * single configured origin rather than '*' is also required: credentialed
  * requests are rejected by browsers when the origin is a wildcard.

@@ -3,17 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Integrated HR and payroll operations platform",
+  "description": "Integrated HR and payroll platform \u2014 API, schema and payroll engine",
   "workspaces": [
-    "server",
-    "web"
+    "server"
   ],
   "scripts": {
     "db:migrate": "node --env-file-if-exists=.env db/migrate.ts",
     "db:seed": "node --env-file-if-exists=.env db/seed.ts",
     "db:reset": "node --env-file-if-exists=.env db/migrate.ts --reset && node --env-file-if-exists=.env db/seed.ts",
-    "dev:server": "npm --workspace server run dev",
-    "dev:web": "npm --workspace web run dev",
+    "dev": "npm --workspace server run dev",
+    "start": "npm --workspace server run start",
     "test": "node --test \"server/test/**/*.test.ts\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "verify:flows": "node scripts/verify_demo_flows.mjs"

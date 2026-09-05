@@ -1,9 +1,9 @@
 /**
  * Validation schemas shared by the server and the browser.
  *
- * One definition, imported by both, is the whole point. Odoo's stated bar is that
- * an invalid email tells the user the email is invalid -- and the surest way for
- * that to be true on both sides is for there to be only one rule to be true about.
+ * One definition, imported by both, is the whole point. An invalid email should
+ * tell the user the email is invalid, and the surest way for that to be true on
+ * both sides is for there to be only one rule to be true about.
  * The server still validates independently; the client just gets the same answer
  * sooner, in the same words.
  */

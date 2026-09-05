@@ -3,8 +3,8 @@
  *
  * The schemas come from shared/, so the browser and the server enforce the same
  * rule and produce the same sentence. Failures are reported per field, because
- * "validation failed" tells a user nothing and Odoo's own stated bar is that an
- * invalid email says the email is invalid.
+ * "validation failed" tells a user nothing: an invalid email should say that the
+ * email is invalid.
  */
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { ZodType } from 'zod';
