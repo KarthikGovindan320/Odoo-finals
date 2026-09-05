@@ -6,6 +6,7 @@
  * These three are what make separate modules feel like one system rather than
  * three screens behind three menu items.
  */
+import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 
@@ -185,6 +186,93 @@ export function AlertList({
           <span>{item.message}</span>
         </div>
       ))}
+    </div>
+  );
+}
+
+/**
+ * Warnings, grouped by kind rather than listed one per row.
+ *
+ * A payrun of sixty people routinely produces forty warnings, and thirty of them
+ * are the same sentence with a different name in it. Listing them flat buries
+ * both the blocking issues and the payslip table underneath. Grouping by code
+ * answers the question the payroll officer actually has -- *what kinds of problem
+ * does this run have, and how many of each* -- and keeps the individual names one
+ * click away.
+ *
+ * Blockers are never collapsed: they stop the run, so they are not something to
+ * go looking for.
+ */
+export function WarningDigest({
+  items,
+}: {
+  items: Array<{ severity: string; code: string; message: string }>;
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  if (items.length === 0) {
+    return (
+      <p className="muted" style={{ margin: 0 }}>
+        No issues found. This payrun is clean.
+      </p>
+    );
+  }
+
+  const groups = new Map<string, { severity: string; code: string; messages: string[] }>();
+  for (const item of items) {
+    const group = groups.get(item.code) ?? { severity: item.severity, code: item.code, messages: [] };
+    group.messages.push(item.message);
+    groups.set(item.code, group);
+  }
+
+  const severityRank: Record<string, number> = { blocker: 0, warning: 1, info: 2 };
+  const ordered = [...groups.values()].sort(
+    (first, second) =>
+      (severityRank[first.severity] ?? 3) - (severityRank[second.severity] ?? 3) ||
+      second.messages.length - first.messages.length,
+  );
+
+  const toggle = (code: string): void =>
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(code)) next.delete(code);
+      else next.add(code);
+      return next;
+    });
+
+  return (
+    <div className="digest">
+      {ordered.map((group) => {
+        const isOpen = group.severity === 'blocker' || expanded.has(group.code);
+        const count = group.messages.length;
+
+        return (
+          <div key={group.code} className={`digest__group digest__group--${group.severity}`}>
+            <button
+              type="button"
+              className="digest__head"
+              onClick={() => toggle(group.code)}
+              aria-expanded={isOpen}
+              disabled={group.severity === 'blocker'}
+            >
+              <span className="digest__code">{group.code}</span>
+              <span className="digest__count">{count}</span>
+              <span className="digest__summary">{group.messages[0]}</span>
+              {group.severity !== 'blocker' && (
+                <span className="digest__toggle" aria-hidden="true">{isOpen ? 'Hide' : `Show all ${count}`}</span>
+              )}
+            </button>
+
+            {isOpen && count > 1 && (
+              <ul className="digest__list">
+                {group.messages.map((message, index) => (
+                  <li key={index}>{message}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

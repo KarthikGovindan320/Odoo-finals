@@ -30,6 +30,15 @@ type PayslipDetail = {
 
 const WORKFLOW = ['draft', 'computed', 'validated', 'paid'];
 
+/** Keeps the badge in step with the ledger rail colour for each category. */
+const CATEGORY_TONE: Record<string, string> = {
+  BASIC: 'petrol',
+  ALW: 'warning',
+  GROSS: 'steel',
+  DED: 'danger',
+  NET: 'success',
+};
+
 export function PayslipDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -110,42 +119,54 @@ export function PayslipDetailPage() {
       </div>
 
       <Panel title="Salary computation" flush>
-        <table className="table">
+        <table className="ledger">
           <thead>
             <tr>
-              <th style={{ width: 90 }}>Code</th>
+              <th style={{ width: 96 }}>Code</th>
               <th>Rule</th>
-              <th style={{ width: 110 }}>Category</th>
-              <th className="table__num">Amount</th>
+              <th style={{ width: 108 }}>Category</th>
+              <th style={{ width: 170, textAlign: 'right' }}>Amount</th>
             </tr>
           </thead>
           <tbody>
             {data.lines.map((line) => {
-              const isTotal = line.category_code === 'GROSS' || line.category_code === 'NET';
+              const isSubtotal = line.category_code === 'GROSS' || line.category_code === 'NET';
+              const isDeduction = line.category_sign < 0;
+
               return (
-                <tr key={line.rule_code}
-                  style={isTotal ? { background: 'var(--gray-100)', fontWeight: 600 } : undefined}>
-                  <td className="mono">{line.rule_code}</td>
+                <tr
+                  key={line.rule_code}
+                  className={[
+                    'ledger__row',
+                    `ledger__row--${line.category_code}`,
+                    isSubtotal ? 'ledger__row--subtotal' : '',
+                  ].filter(Boolean).join(' ')}
+                >
+                  <td className="ledger__code">{line.rule_code}</td>
                   <td>{line.rule_name}</td>
-                  <td><Badge variant={line.category_sign < 0 ? 'danger' : 'plum'}>{line.category_code}</Badge></td>
-                  <td className="table__num"
-                    style={line.category_sign < 0 ? { color: 'var(--danger)' } : undefined}>
-                    {line.category_sign < 0 ? '− ' : ''}
+                  <td>
+                    <Badge variant={CATEGORY_TONE[line.category_code] ?? 'petrol'}>
+                      {line.category_code}
+                    </Badge>
+                  </td>
+                  <td className={`ledger__amount${isDeduction ? ' ledger__amount--negative' : ''}`}>
+                    {isDeduction ? '\u2212 ' : ''}
                     {formatMoney(Number(line.amount), data.currency_code)}
                   </td>
                 </tr>
               );
             })}
           </tbody>
-          <tfoot>
-            <tr style={{ background: 'var(--teal-light)' }}>
-              <td colSpan={3} style={{ fontWeight: 700 }}>Net payable</td>
-              <td className="table__num" style={{ fontWeight: 700, fontSize: 15 }}>
-                {formatMoney(Number(data.net_amount), data.currency_code)}
-              </td>
-            </tr>
-          </tfoot>
         </table>
+
+        {/* The number the employee actually receives, given the weight it has
+            on the paper document it stands in for. */}
+        <div className="ledger__net">
+          <span className="ledger__net-label">Net payable</span>
+          <span className="ledger__net-value">
+            {formatMoney(Number(data.net_amount), data.currency_code)}
+          </span>
+        </div>
       </Panel>
 
       <p className="muted" style={{ fontSize: 12 }}>
@@ -167,10 +188,9 @@ export function PayslipDetailPage() {
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', gap: 'var(--space-3)', padding: '5px 0',
-                  borderBottom: '1px solid var(--border-subtle)' }}>
-      <dt className="muted" style={{ width: 150, flex: '0 0 150px', fontSize: 13 }}>{label}</dt>
-      <dd style={{ margin: 0, fontSize: 13 }}>
+    <div className="detail-row">
+      <dt>{label}</dt>
+      <dd>
         {value === null || value === undefined || value === '' ? <span className="muted">—</span> : value}
       </dd>
     </div>

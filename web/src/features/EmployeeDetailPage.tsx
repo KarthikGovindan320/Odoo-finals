@@ -190,10 +190,9 @@ export function EmployeeDetailPage() {
 
 function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div style={{ display: 'flex', gap: 'var(--space-3)', padding: '5px 0',
-                  borderBottom: '1px solid var(--border-subtle)' }}>
-      <dt className="muted" style={{ width: 140, flex: '0 0 140px', fontSize: 13 }}>{label}</dt>
-      <dd style={{ margin: 0, fontSize: 13 }}>
+    <div className="detail-row">
+      <dt>{label}</dt>
+      <dd>
         {value === null || value === undefined || value === '' ? <span className="muted">—</span> : value}
       </dd>
     </div>

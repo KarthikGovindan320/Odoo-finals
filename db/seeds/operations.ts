@@ -63,8 +63,15 @@ export async function seedAttendance(
 
       const isLate = random.chance(0.12);
       const lateMinutes = isLate ? random.int(16, 75) : random.int(-10, 12);
-      const worksOvertime = random.chance(0.14);
-      const overtimeMinutes = worksOvertime ? random.int(65, 180) : random.int(-15, 20);
+
+      // A real month has a handful of long days, not one every week. At 14% a
+      // day, essentially every employee accrued overtime every month, which
+      // made the figure meaningless. At 5%, roughly a third of employees have a
+      // clean month -- which is what the dashboard's overtime count should mean.
+      // Ordinary days drift by at most 14 minutes, inside the payroll grace, so
+      // they contribute nothing.
+      const worksOvertime = random.chance(0.05);
+      const overtimeMinutes = worksOvertime ? random.int(65, 180) : random.int(-15, 14);
 
       const checkIn = shiftMinutes(day, scheduledStartHour, scheduledStartMinute, lateMinutes);
       const forgotCheckOut = random.chance(0.025);

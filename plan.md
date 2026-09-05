@@ -865,6 +865,16 @@ The spec does not define everything. Every gap I filled is recorded here with wh
 *Chosen:* the resolver picks the contract in force on the **last day of the period**, records the superseded contract by reference in a `PARTIAL_CONTRACT` warning, and reserves the `MULTIPLE_CONTRACTS` blocker for two contracts genuinely in force at the same instant — which it still checks for pairwise, even though the exclusion constraint makes it impossible.
 *Why:* the first implementation treated any second overlapping row as ambiguous and blocked the payslip, which fired on eight perfectly normal promotions in the seed data. A contract change mid-period is routine; simultaneity is the thing that is actually wrong. Keeping the impossible case as an assertion rather than deleting it is deliberate: a constraint we rely on is one worth checking, and if it ever fires we want to see it rather than silently pick a row.
 
+**19. Attendance spans include the break; schedule hours do not.** *(Found by reading a seeded payslip.)*
+*Ambiguous:* the spec defines neither how attendance hours relate to scheduled hours, nor what counts as overtime.
+*Chosen:* an attendance record measures presence — check-in to check-out — so it contains the unpaid break, while a schedule's hours are already net of it. The break is deducted from the attendance span before the two are compared or accumulated. Overtime is then only counted past a **15-minute daily grace**, and past it the whole excess is paid rather than the excess above the threshold.
+*Why:* comparing a presence span directly against net scheduled hours made an ordinary nine-to-six day look like an hour of overtime, every day — the seeded data showed a median of 22 overtime hours per payslip, and every payslip in the company carrying some. Both are obviously wrong, and neither is visible until you read an actual payslip. The grace threshold is standard Indian payroll practice and is what stops "stayed eight minutes late" from becoming a payable line.
+
+**20. A day covered by approved leave is not a day worked.**
+*Ambiguous:* nothing says what to do when an attendance record and approved leave exist for the same day.
+*Chosen:* leave wins. The day counts once, as leave, and is excluded from attended days.
+*Why:* counting it as both made `worked_days` exceed `scheduled_days` on 32 seeded payslips, which cannot be true and is exactly the sort of arithmetic a judge checks. Leave is the authoritative record for pay because it is the one that went through approval.
+
 ---
 
 ## Questions to clarify with the Odoo representative guides

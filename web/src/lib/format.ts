@@ -9,6 +9,17 @@ export function formatMoney(value: number | null | undefined, currency = 'INR'):
   }).format(value);
 }
 
+/**
+ * Headline figures drop the paise. On a two-crore total the decimals are noise,
+ * and they push the number past the width a KPI tile can hold.
+ */
+export function formatMoneyWhole(value: number | null | undefined, currency = 'INR'): string {
+  if (value === null || value === undefined) return '—';
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency', currency, maximumFractionDigits: 0,
+  }).format(value);
+}
+
 /** Compact form for chart axes and dense tiles: 12.4L, 1.2Cr. */
 export function formatMoneyShort(value: number | null | undefined): string {
   if (value === null || value === undefined) return '—';

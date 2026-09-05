@@ -8,6 +8,16 @@
  */
 import { formatMoneyShort } from '../lib/format.ts';
 
+/**
+ * Departments are ranked by cost, so neighbouring bars must stay apart. The
+ * order alternates hue family rather than walking a gradient, which is what
+ * keeps the fourth and fifth bars distinguishable at a glance.
+ */
+const SERIES = [
+  'var(--series-1)', 'var(--series-2)', 'var(--series-3)',
+  'var(--series-4)', 'var(--series-5)', 'var(--series-6)',
+];
+
 type BarDatum = { label: string; value: number };
 
 export function BarChart({ data, height = 200 }: { data: BarDatum[]; height?: number }) {
@@ -35,16 +45,16 @@ export function BarChart({ data, height = 200 }: { data: BarDatum[]; height?: nu
         const width = Math.max((item.value / maximum) * (520 - labelWidth - 74), 2);
         return (
           <g key={item.label}>
-            <text x="0" y={y + 15} fontSize="12" fill="var(--gray-700)">
+            <text x="0" y={y + 15} fontSize="12" fill="var(--text)" fontWeight="500">
               {item.label.length > 18 ? `${item.label.slice(0, 17)}…` : item.label}
             </text>
             <rect
               x={labelWidth} y={y} width={width} height={barHeight}
-              fill="var(--plum)" rx="2"
+              fill={SERIES[index % SERIES.length]} rx="2"
             />
             <text
               x={labelWidth + width + 6} y={y + 15}
-              fontSize="11" fill="var(--gray-600)" fontWeight="600"
+              fontSize="11" fill="var(--text-2)" fontWeight="600"
             >
               {formatMoneyShort(item.value)}
             </text>
@@ -74,7 +84,7 @@ export function LineChart({ data }: { data: LineDatum[] }) {
 
   const width = 520;
   const height = 200;
-  const padding = { top: 16, right: 16, bottom: 28, left: 52 };
+  const padding = { top: 26, right: 20, bottom: 28, left: 52 };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
 
@@ -102,21 +112,29 @@ export function LineChart({ data }: { data: LineDatum[] }) {
           <g key={fraction}>
             <line
               x1={padding.left} y1={y} x2={width - padding.right} y2={y}
-              stroke="var(--gray-200)" strokeWidth="1"
+              stroke="var(--line-soft)" strokeWidth="1"
             />
-            <text x="0" y={y + 4} fontSize="10" fill="var(--gray-500)">
+            <text x="0" y={y + 4} fontSize="10" fill="var(--text-3)">
               {formatMoneyShort(minimum + span * fraction)}
             </text>
           </g>
         );
       })}
 
-      <path d={area} fill="var(--teal)" opacity="0.1" />
-      <path d={path} fill="none" stroke="var(--teal)" strokeWidth="2" strokeLinejoin="round" />
+      <path d={area} fill="var(--petrol)" opacity="0.07" />
+      <path d={path} fill="none" stroke="var(--petrol)" strokeWidth="2.5" strokeLinejoin="round" />
 
+      {/* Monthly payroll totals barely move month to month, so an unlabelled line
+          reads as flat and uninformative. The values are the point. */}
       {points.map(([x, y], index) => (
         <g key={data[index]?.label}>
-          <circle cx={x} cy={y} r="3.5" fill="var(--surface)" stroke="var(--teal)" strokeWidth="2" />
+          <text
+            x={x} y={y - 11} fontSize="10.5" fontWeight="600"
+            fill="var(--petrol-ink)" textAnchor="middle"
+          >
+            {formatMoneyShort(data[index]?.value ?? 0)}
+          </text>
+          <circle cx={x} cy={y} r="3.5" fill="var(--surface)" stroke="var(--petrol)" strokeWidth="2.5" />
           <title>{`${data[index]?.label}: ${formatMoneyShort(data[index]?.value ?? 0)}`}</title>
         </g>
       ))}
@@ -125,7 +143,7 @@ export function LineChart({ data }: { data: LineDatum[] }) {
         <text
           key={item.label}
           x={points[index]?.[0]} y={height - 8}
-          fontSize="10" fill="var(--gray-600)" textAnchor="middle"
+          fontSize="10" fill="var(--text-2)" textAnchor="middle"
         >
           {item.label.slice(2)}
         </text>

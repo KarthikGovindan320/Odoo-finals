@@ -13,7 +13,7 @@ import { api, ApiError } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { AlertList, Badge, Panel, StatusBar } from '../components/Chrome.tsx';
+import { Badge, Panel, StatusBar, WarningDigest } from '../components/Chrome.tsx';
 
 type PayrunDetail = {
   id: number; name: string; salary_structure_id: number;
@@ -149,7 +149,20 @@ export function PayrunDetailPage() {
         )}
       </Panel>
 
-      <Panel title={`Warnings (${data.warnings.length})`}>
+      <Panel
+        title={`Warnings (${data.warnings.length})`}
+        actions={
+          <span style={{ display: 'flex', gap: 'var(--space-2)' }}>
+            {blockers.length > 0 && <Badge variant="danger">{blockers.length} blocking</Badge>}
+            <Badge variant="warning">
+              {data.warnings.filter((item) => item.severity === 'warning').length} warnings
+            </Badge>
+            <Badge variant="info">
+              {data.warnings.filter((item) => item.severity === 'info').length} notes
+            </Badge>
+          </span>
+        }
+      >
         {blockers.length > 0 && (
           <div className="alert alert--blocker">
             <span className="alert__code">BLOCKED</span>
@@ -159,7 +172,7 @@ export function PayrunDetailPage() {
             </span>
           </div>
         )}
-        <AlertList
+        <WarningDigest
           items={data.warnings.map((item) => ({
             severity: item.severity,
             code: item.code,
