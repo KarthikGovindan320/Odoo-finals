@@ -61,11 +61,24 @@ jobs:
       - run: npm run db:reset
       - name: Start the API
         run: |
-          npm run dev:server > /tmp/server.log 2>&1 &
+          # `start`, not `dev`: the dev script runs node --watch, which tries to
+          # watch the .env named by --env-file-if-exists and dies with ENOENT
+          # when there isn't one -- which is always the case in CI, since .env is
+          # gitignored.
+          npm --workspace server run start > /tmp/server.log 2>&1 &
+
+          # Fail here rather than letting the next step report a confusing
+          # ECONNREFUSED from inside the flow script.
           for _ in $(seq 1 30); do
-            curl -sf http://localhost:4000/api/health && break
+            if curl -sf http://localhost:4000/api/health > /dev/null; then
+              echo "API is up"
+              exit 0
+            fi
             sleep 1
           done
+          echo "API did not become healthy within 30s"
+          cat /tmp/server.log
+          exit 1
       - run: npm run verify:flows
       - name: Server log on failure
         if: failure()
