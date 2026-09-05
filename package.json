@@ -9,9 +9,9 @@
     "web"
   ],
   "scripts": {
-    "db:migrate": "node db/migrate.ts",
-    "db:seed": "node db/seed.ts",
-    "db:reset": "node db/migrate.ts --reset && node db/seed.ts",
+    "db:migrate": "node --env-file-if-exists=.env db/migrate.ts",
+    "db:seed": "node --env-file-if-exists=.env db/seed.ts",
+    "db:reset": "node --env-file-if-exists=.env db/migrate.ts --reset && node --env-file-if-exists=.env db/seed.ts",
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
     "test": "node --test \"server/test/**/*.test.ts\"",
