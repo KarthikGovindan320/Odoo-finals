@@ -247,6 +247,13 @@ a:hover { text-decoration: underline; }
   font-size: var(--size-xs); color: var(--text-2); white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* A filter sized to its own contents. Every list that has one was setting this
+   inline, once per control. Qualified by the toolbar because the .select base
+   below stretches to 100% and would otherwise win on source order alone. */
+.toolbar .toolbar__filter { width: auto; max-width: 240px; }
+.toolbar__range { display: flex; align-items: center; gap: 6px; }
+.toolbar__range-sep { color: var(--text-3); }
+.toolbar__clear { font-size: var(--size-xs); }
 
 .table { width: 100%; border-collapse: collapse; font-size: var(--size-sm); }
 .table th {
@@ -580,6 +587,11 @@ a:hover { text-decoration: underline; }
 /* ══ Misc ════════════════════════════════════════════════════════════════ */
 
 .muted { color: var(--text-2); }
+/* Read aloud, never drawn: for the word a glyph is standing in for. */
+.visually-hidden {
+  position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
 .mono { font-family: var(--font-mono); font-size: var(--size-xs); }
 .loading { padding: var(--space-6); text-align: center; color: var(--text-2); }
 .error-box {
@@ -1189,50 +1201,211 @@ a:hover { text-decoration: underline; }
    ---------------------------------------------------------------------------
    A stream rather than a table: the interesting part of each entry is a
    variable number of field changes, and a table cell holding four lines of
-   before-and-after is a table fighting its own shape. */
+   before-and-after is a table fighting its own shape.
 
-.trail { list-style: none; margin: 0; padding: 0; }
+   Three columns per entry -- the clock time, the spine, and everything else.
+   The changes sit in the third column rather than being pushed across by an
+   indent, which is how they stayed aligned with the head above them without a
+   second copy of the gutter width to keep in step. */
+
+.trail { padding: var(--space-1) 0 var(--space-2); }
+
+/* The panel clips its children to its own corners with overflow: hidden, and
+   hidden makes it a scroll container -- which is the box a sticky descendant
+   then sticks inside, and the panel never scrolls, so the day heading below
+   just rode off the top of the screen. clip crops identically without becoming
+   one, so the heading resolves against the page instead. Scoped by :has to the
+   one panel that holds a trail rather than changing every panel in the
+   product for it. */
+.panel:has(.trail) { overflow: clip; }
+
+/* Stated once at the head of the day's entries instead of on all twenty-five of
+   them, and sticky so the day is still named forty entries down. The date is
+   set beside the name and not inside it: a heading reading only "Today" is
+   worthless the moment it is screenshotted or read a week later. */
+.trail__day-head {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: baseline; gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: linear-gradient(var(--surface) 78%, transparent);
+}
+.trail__day-name {
+  font-size: var(--size-micro); font-weight: 600; text-transform: uppercase;
+  letter-spacing: var(--track-label); color: var(--text-2);
+}
+.trail__day-date {
+  font-family: var(--font-mono); font-size: var(--size-micro); color: var(--text-3);
+}
+
+.trail__entries { list-style: none; margin: 0; padding: 0; }
+
 .trail__entry {
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--line-soft);
+  position: relative;
+  display: grid; grid-template-columns: 44px 18px minmax(0, 1fr);
+  align-items: start; column-gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  transition: background 90ms ease;
 }
-.trail__entry:last-child { border-bottom: 0; }
+.trail__entry:hover { background: var(--surface-2); }
 
-.trail__head {
-  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
-  font-size: var(--size-xs);
+/* The spine. Drawn per entry rather than once behind the list so it can be
+   trimmed at the ends of each day, and so it never runs on past the last
+   entry into the pagination. Centred on the marker column by translating it
+   off its own left edge, which keeps the two aligned without the 0.5px drift
+   of positioning a 1px line by arithmetic. */
+.trail__entry::before {
+  content: ''; position: absolute; top: 0; bottom: 0;
+  left: calc(var(--space-4) + 44px + var(--space-2) + 9px);
+  transform: translateX(-50%);
+  width: 1px; background: var(--line-soft);
 }
+.trail__entry:first-child::before { top: 14px; }
+.trail__entry:last-child::before { bottom: auto; height: 14px; }
+
 .trail__when {
   font-family: var(--font-mono); font-size: var(--size-micro); color: var(--text-3);
-  min-width: 132px;
+  font-variant-numeric: tabular-nums; text-align: right; padding-top: 3px;
 }
-.trail__what { color: var(--text-2); }
+
+/* What happened, before a word of it is read. Sits on the spine, ringed in the
+   surface colour so the line appears to pass behind it. */
+.trail__mark {
+  /* justify-self, because a grid item defaults to stretching: left to itself the
+     9px disc filled the column and came out an ellipse with the spine down it.
+     Positioned so that it paints after the spine -- the spine is an absolutely
+     positioned pseudo-element and so was drawn straight across the disc, which
+     came out looking bisected. */
+  position: relative;
+  justify-self: center; align-self: start;
+  width: 9px; height: 9px; margin-top: 6px; border-radius: 50%;
+  box-shadow: 0 0 0 3px var(--surface);
+  background: var(--steel);
+}
+.trail__entry:hover .trail__mark { box-shadow: 0 0 0 3px var(--surface-2); }
+.trail__mark--insert { background: var(--green); }
+.trail__mark--update { background: var(--petrol); }
+.trail__mark--delete { background: var(--brick); }
+
+.trail__body { min-width: 0; }
+.trail__head {
+  display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap;
+  font-size: var(--size-xs); min-height: 20px;
+}
 .trail__spacer { flex: 1 1 auto; }
-.trail__who { color: var(--text-2); }
-.trail__history { font-size: var(--size-micro); }
 
+.trail__verb { font-weight: 600; color: var(--text-2); }
+.trail__verb--insert { color: var(--green-ink); }
+.trail__verb--update { color: var(--petrol-ink); }
+.trail__verb--delete { color: var(--brick-ink); }
+
+/* The record type is a category, the subject is a name. Setting them alike left
+   the reader parsing "Attendance — Sanjay Krishnan" to find out which was
+   which. */
+.trail__kind {
+  font-size: var(--size-micro); text-transform: uppercase;
+  letter-spacing: var(--track-label); color: var(--steel-ink);
+  background: var(--steel-wash); border-radius: var(--radius-sm);
+  padding: 1px 6px; white-space: nowrap;
+}
+.trail__subject { font-weight: 600; color: var(--text); }
+a.trail__subject { color: var(--accent-ink); }
+
+.trail__who { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-2); }
+/* Initials rather than a photograph, because there are no photographs. One
+   neutral tint for everyone: a colour per person would be a category this
+   system does not have, and hue here is spent on what happened. */
+.trail__avatar {
+  flex: none; width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--petrol-wash); color: var(--petrol-ink);
+  font-size: var(--size-micro); font-weight: 700; letter-spacing: 0.02em;
+}
+/* Nobody to draw, and it should not look like a person with no initials. */
+.trail__avatar--system {
+  background: none; border: 1px dashed var(--line);
+}
+.trail__actor { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trail__role { color: var(--text-3); font-size: var(--size-micro); white-space: nowrap; }
+.trail__role::before { content: '· '; }
+
+.trail__history {
+  flex: none; background: none; border: 0; padding: 1px 4px; font: inherit;
+  font-size: var(--size-micro); color: var(--text-3); cursor: pointer;
+  border-radius: var(--radius-sm); text-decoration: underline;
+  text-decoration-color: transparent; transition: color 90ms ease, text-decoration-color 90ms ease;
+}
+.trail__entry:hover .trail__history { color: var(--accent-ink); text-decoration-color: currentColor; }
+.trail__history:hover { color: var(--accent-ink); text-decoration-color: currentColor; }
+
+/* The whole entry's changes are one grid and each row dissolves into it, so the
+   label column is as wide as that entry's longest label and no wider -- a fixed
+   width sized for "Working schedule id" left a hand's breadth of nothing after
+   "Id" on every other row. */
 .trail__changes {
-  margin: var(--space-2) 0 0; padding: 0 0 0 132px;
-  display: grid; gap: 2px;
+  margin: 3px 0 0; font-size: var(--size-micro);
+  display: grid; grid-template-columns: minmax(0, max-content) minmax(0, 1fr);
+  gap: 1px var(--space-3); align-items: baseline;
 }
-/* Falls back to a plain stack once the label gutter would leave no room for the
-   values themselves. */
-@media (max-width: 720px) { .trail__changes { padding-left: 0; } }
-
-.trail__change {
-  display: grid; grid-template-columns: 190px minmax(0, 1fr);
-  gap: var(--space-2); align-items: baseline;
-  font-size: var(--size-micro);
-}
-.trail__change dt { color: var(--text-3); }
+.trail__change { display: contents; }
+.trail__change dt { color: var(--text-3); overflow-wrap: anywhere; }
 .trail__change dd {
   margin: 0; display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap;
   font-family: var(--font-mono); overflow-wrap: anywhere;
 }
-.trail__from { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--line); }
+
+/* Falls back to a plain stack once the label column would leave no room for the
+   values themselves. */
+@media (max-width: 720px) {
+  .trail__changes { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  /* Without a right edge worth reaching, the actor stops being a column and the
+     spacer only serves to strand the History button alone on its own line.
+     When History wraps anyway it goes to the right of the line it lands on, so
+     it reads as this entry's action rather than as a link left behind. */
+  .trail__spacer { display: none; }
+  .trail__history { margin-left: auto; }
+}
+.trail__from {
+  color: var(--text-3); text-decoration: line-through;
+  text-decoration-color: rgba(176, 57, 42, 0.45);
+}
 .trail__arrow { color: var(--text-3); }
 .trail__to { color: var(--ink-800); font-weight: 600; }
-.trail__more { font-size: var(--size-micro); margin-top: 4px; }
+/* Quiet, but it is still a statement -- "there was nothing here before". At
+   --line it was invisible on white and an update out of an empty column read as
+   a stray arrow with nothing in front of it. */
+.trail__empty { color: rgba(20, 35, 42, 0.32); }
+/* Not a value the column held -- the trail stating it declined to record one.
+   Set in the same monospace as an account number, '[redacted]' invites the
+   reader to parse it as data. */
+.trail__redacted {
+  font-family: var(--font); font-size: var(--size-micro); text-transform: uppercase;
+  letter-spacing: var(--track-label); color: var(--text-3);
+  border: 1px dashed var(--line); border-radius: var(--radius-sm); padding: 0 4px;
+}
+
+.trail__more {
+  background: none; border: 0; padding: 2px 0 0; font: inherit;
+  font-size: var(--size-micro); color: var(--accent-ink); cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Placeholder entries rather than a word, so the panel keeps its height and the
+   page does not jump every time a filter changes. */
+.trail__ghost {
+  display: grid; gap: 6px; padding: var(--space-3) var(--space-4);
+}
+.trail__ghost-bar {
+  height: 8px; border-radius: 999px; background: var(--line-soft);
+  animation: trail-pulse 1.4s ease-in-out infinite;
+}
+.trail__ghost-bar:first-child { width: 44%; }
+.trail__ghost-bar:last-child { width: 68%; margin-left: 64px; background: var(--surface-2); }
+.trail__ghost:nth-child(even) .trail__ghost-bar:first-child { width: 52%; }
+.trail__ghost:nth-child(even) .trail__ghost-bar:last-child { width: 38%; }
+@keyframes trail-pulse { 50% { opacity: 0.45; } }
+
+.trail__none { padding: var(--space-6); text-align: center; color: var(--text-2); }
+.trail__none p { margin: 0 0 var(--space-2); }
 
 /* Contracts running out: three bands, each a link into the filtered list. */
 .expiry { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-3); }

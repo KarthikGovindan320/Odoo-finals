@@ -67,6 +67,40 @@ export function formatDateTime(value: string | null | undefined): string {
   }).format(new Date(value));
 }
 
+/**
+ * The tenant's calendar day for an instant, as 'YYYY-MM-DD'.
+ *
+ * en-CA is used for nothing but its format: it is the one common locale whose
+ * short date is already ISO-ordered, so the string sorts and compares as a day
+ * without any part-assembling of its own.
+ */
+export function dayKey(value: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', timeZone: TENANT_TIMEZONE,
+  }).format(new Date(value));
+}
+
+/**
+ * What to call a day at the head of a stream of them: 'Today', 'Yesterday', or
+ * the weekday. The date itself is set beside it rather than inside it -- a
+ * heading reading only 'Today' is worthless the moment somebody screenshots it.
+ *
+ * Yesterday is one fixed day back because the tenant zone does not observe
+ * daylight saving; in a zone that did, a 23- or 25-hour day would land this on
+ * the wrong side of midnight and it would have to be done in calendar terms.
+ */
+export function formatDayName(value: string): string {
+  const day = dayKey(value);
+  const now = Date.now();
+
+  if (day === dayKey(new Date(now).toISOString())) return 'Today';
+  if (day === dayKey(new Date(now - 86_400_000).toISOString())) return 'Yesterday';
+
+  return new Intl.DateTimeFormat('en-IN', {
+    weekday: 'long', timeZone: TENANT_TIMEZONE,
+  }).format(new Date(value));
+}
+
 export function formatTime(value: string | null | undefined): string {
   if (!value) return '—';
   return new Intl.DateTimeFormat('en-IN', {
