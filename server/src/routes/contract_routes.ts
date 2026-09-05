@@ -47,9 +47,10 @@ contracts.get('/', 'contract:read', async (request, response) => {
 });
 
 contracts.get('/:id', 'contract:read', async (request, response) => {
-  const contract = await findContract(parseOrThrow(identifier, request.params.id));
+  const id = parseOrThrow(identifier, request.params.id);
+  const contract = await findContract(id);
   if (contract === null) {
-    throw notFound('Contract', request.params.id ?? '');
+    throw notFound('Contract', id);
   }
   requireOwnEmployee(request, contract.employee_id);
   response.json(contract);
