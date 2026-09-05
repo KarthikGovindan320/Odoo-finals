@@ -6,11 +6,12 @@
  * with the record in a single request rather than six.
  */
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { useParams } from 'react-router';
 
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useBackTo } from '../lib/use_back_to.ts';
 import { Badge, DetailRow, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
 import { EmployeeFormModal } from './EmployeeFormModal.tsx';
 
@@ -37,7 +38,7 @@ type Balance = {
 
 export function EmployeeDetailPage() {
   const { id } = useParams();
-  const navigate = useNavigate();
+  const backToList = useBackTo('/employees');
   const { can } = useAuth();
   const [editing, setEditing] = useState(false);
 
@@ -163,7 +164,7 @@ export function EmployeeDetailPage() {
         )}
       </Panel>
 
-      <button className="btn" onClick={() => navigate('/employees')}>← Back to employees</button>
+      <button className="btn" onClick={backToList}>← Back to employees</button>
 
       {editing && (
         <EmployeeFormModal

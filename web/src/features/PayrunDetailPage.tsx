@@ -13,6 +13,7 @@ import { api, ApiError } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
+import { useBackTo } from '../lib/use_back_to.ts';
 import { Badge, ConfirmDialog, PAYROLL_WORKFLOW, Panel, StatusBar, WarningDigest } from '../components/Chrome.tsx';
 
 type PayrunDetail = {
@@ -113,6 +114,7 @@ function payrunActions(payslipCount: number): Record<string, PayrunAction> {
 export function PayrunDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const backToList = useBackTo('/payroll');
   const { can } = useAuth();
 
   const { data, loading, error, reload } = useResource<PayrunDetail>(`/payruns/${id}`);
@@ -313,7 +315,7 @@ export function PayrunDetailPage() {
         </div>
       </Panel>
 
-      <button className="btn" onClick={() => navigate('/payroll')}>← Back to payroll</button>
+      <button className="btn" onClick={backToList}>← Back to payroll</button>
 
       {pendingAction?.confirm !== undefined && (
         <ConfirmDialog

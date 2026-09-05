@@ -7,6 +7,8 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 
+import { useUrlState } from '../lib/use_url_state.ts';
+
 import { queryString } from '../lib/api.ts';
 import { useResource, type Page } from '../lib/use_resource.ts';
 import { useReference } from '../lib/use_reference.ts';
@@ -39,20 +41,43 @@ type Reference = {
   employment_types: Array<{ id: number; name: string }>;
 };
 
+/**
+ * Defaults for the list's URL state. A value equal to its default is kept out of
+ * the address bar, so the plain list is /employees rather than /employees?view=
+ * list&page=1&sort=employee_number%3Aasc.
+ */
+const EMPLOYEE_LIST_DEFAULTS = {
+  view: 'list',
+  q: '',
+  department_id: '',
+  employment_type_id: '',
+  status: '',
+  sort: 'employee_number:asc',
+  page: '1',
+};
+
 export function EmployeesPage() {
   const navigate = useNavigate();
   const { can } = useAuth();
-  const [view, setView] = useState<'list' | 'kanban'>('list');
+
+  // In the URL, not in component state. Opening an employee unmounts this page,
+  // so anything held here is gone by the time the user comes back -- which is
+  // exactly when they expect their view, search and filters to still be set.
+  const { values, patch } = useUrlState(EMPLOYEE_LIST_DEFAULTS);
+  const view = values.view === 'kanban' ? 'kanban' : 'list';
+  const { q: search, department_id: departmentId, employment_type_id: employmentTypeId,
+          status, sort } = values;
+  const page = Math.max(Number(values.page) || 1, 1);
+
   // Kanban groups whatever the request returned, so its page size is the board's
   // capacity. It is paginated like the list rather than silently truncated.
   const pageSize = 60;
-  const [search, setSearch] = useState('');
-  const [departmentId, setDepartmentId] = useState('');
-  const [employmentTypeId, setEmploymentTypeId] = useState('');
-  const [status, setStatus] = useState('');
-  const [sort, setSort] = useState('employee_number:asc');
-  const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
+
+  // Changing what is being looked at returns to the first page; changing the
+  // page obviously does not.
+  const setFilter = (next: Partial<Record<keyof typeof EMPLOYEE_LIST_DEFAULTS, string>>): void =>
+    patch({ ...next, page: '1' });
 
   const reference = useReference();
   // The typed value drives the input; the settled value drives the request.
@@ -90,11 +115,6 @@ export function EmployeesPage() {
       render: (row) => <Badge variant={stateVariant(row.status)}>{humanize(row.status)}</Badge> },
   ];
 
-  const resetPageThen = <Value,>(setter: (value: Value) => void) => (value: Value): void => {
-    setPage(1);
-    setter(value);
-  };
-
   return (
     <>
       <div className="page__header">
@@ -107,9 +127,11 @@ export function EmployeesPage() {
         <div className="page__actions">
           <div className="segmented">
             <button className={`btn btn--sm${view === 'list' ? ' btn--selected' : ''}`}
-              onClick={() => setView('list')}>List</button>
+              aria-pressed={view === 'list'}
+              onClick={() => patch({ view: 'list' })}>List</button>
             <button className={`btn btn--sm${view === 'kanban' ? ' btn--selected' : ''}`}
-              onClick={() => setView('kanban')}>Kanban</button>
+              aria-pressed={view === 'kanban'}
+              onClick={() => patch({ view: 'kanban' })}>Kanban</button>
           </div>
           {can('employee:write') && (
             <button className="btn btn--primary" onClick={() => setCreating(true)}>New employee</button>
@@ -122,12 +144,12 @@ export function EmployeesPage() {
       <Panel flush>
         <Toolbar
           search={search}
-          onSearchChange={resetPageThen(setSearch)}
+          onSearchChange={(value) => setFilter({ q: value })}
           searchPlaceholder="Search name, number or email…"
           right={<span className="toolbar__count">{data?.total ?? 0} employees</span>}
         >
           <select className="select" style={{ width: 'auto' }} value={departmentId}
-            onChange={(event) => resetPageThen(setDepartmentId)(event.target.value)}
+            onChange={(event) => setFilter({ department_id: event.target.value })}
             aria-label="Filter by department">
             <option value="">All departments</option>
             {reference.data?.departments.map((item) => (
@@ -135,7 +157,7 @@ export function EmployeesPage() {
             ))}
           </select>
           <select className="select" style={{ width: 'auto' }} value={employmentTypeId}
-            onChange={(event) => resetPageThen(setEmploymentTypeId)(event.target.value)}
+            onChange={(event) => setFilter({ employment_type_id: event.target.value })}
             aria-label="Filter by employee type">
             <option value="">All types</option>
             {reference.data?.employment_types.map((item) => (
@@ -143,7 +165,7 @@ export function EmployeesPage() {
             ))}
           </select>
           <select className="select" style={{ width: 'auto' }} value={status}
-            onChange={(event) => resetPageThen(setStatus)(event.target.value)}
+            onChange={(event) => setFilter({ status: event.target.value })}
             aria-label="Filter by status">
             <option value="">Any status</option>
             <option value="active">Active</option>
@@ -161,14 +183,14 @@ export function EmployeesPage() {
               onRowClick={(row) => navigate(`/employees/${row.id}`)}
               loading={loading}
               sort={sort}
-              onSortChange={setSort}
+              onSortChange={(value) => setFilter({ sort: value })}
               emptyMessage="No employees match these filters."
             />
             <Pagination
               page={data?.page ?? 1}
               totalPages={data?.total_pages ?? 1}
               total={data?.total ?? 0}
-              onPageChange={setPage}
+              onPageChange={(next) => patch({ page: String(next) })}
             />
           </>
         ) : (
@@ -187,7 +209,7 @@ export function EmployeesPage() {
               page={data?.page ?? 1}
               totalPages={data?.total_pages ?? 1}
               total={data?.total ?? 0}
-              onPageChange={setPage}
+              onPageChange={(next) => patch({ page: String(next) })}
             />
           </>
         )}
