@@ -15,19 +15,59 @@ import { addDays, addMonths, type IsoDate } from './dates.ts';
 import type { Random } from './random.ts';
 import type { ReferenceIds } from './reference_data.ts';
 
+/**
+ * Name pools, sized for the headcount they have to fill.
+ *
+ * At 350 employees a 32x16 pool produces the same handful of names over and
+ * over, which makes every list on every screen look obviously generated. These
+ * give roughly 5,000 combinations, so repeats are occasional rather than the
+ * rule -- and a repeated full name is harmless anyway, since the employee number
+ * is the key and the work email carries an index.
+ */
 const FIRST_NAMES = [
   'Aarav', 'Priya', 'Rohan', 'Ananya', 'Vikram', 'Meera', 'Arjun', 'Kavya',
   'Siddharth', 'Nisha', 'Rahul', 'Divya', 'Karthik', 'Sneha', 'Aditya', 'Pooja',
   'Manish', 'Ritu', 'Sanjay', 'Ishita', 'Nikhil', 'Tara', 'Varun', 'Lakshmi',
   'Rajesh', 'Anjali', 'Suresh', 'Deepa', 'Amit', 'Shreya', 'Gaurav', 'Neha',
+  'Aditi', 'Harsh', 'Sanya', 'Yash', 'Trisha', 'Devan', 'Mitali', 'Kunal',
+  'Rhea', 'Ishaan', 'Nandini', 'Abhay', 'Sarika', 'Vivek', 'Charu', 'Om',
+  'Bhavna', 'Rishi', 'Kiara', 'Naveen', 'Sonal', 'Tarun', 'Ayesha', 'Girish',
+  'Payal', 'Mohit', 'Swati', 'Dhruv', 'Renuka', 'Akash', 'Vaishali', 'Imran',
+  'Leela', 'Pranav', 'Sunita', 'Aniket', 'Madhuri', 'Kabir', 'Jaya', 'Rohit',
+  'Preeti', 'Sameer', 'Anushka', 'Vinay', 'Gitanjali', 'Nitin', 'Rukmini', 'Zoya',
 ];
 
 const LAST_NAMES = [
   'Sharma', 'Nair', 'Patel', 'Reddy', 'Iyer', 'Menon', 'Gupta', 'Desai',
   'Kulkarni', 'Bose', 'Chatterjee', 'Rao', 'Joshi', 'Malhotra', 'Verma', 'Pillai',
+  'Banerjee', 'Mehta', 'Kapoor', 'Shetty', 'Krishnan', 'Qureshi', 'Rangan', 'Dutta',
+  'Sengupta', 'Ahluwalia', 'Chauhan', 'Bhatt', 'Naidu', 'Varghese', 'Thakur', 'Saxena',
+  'Mukherjee', 'Raghavan', 'Deshpande', 'Sinha', 'Chandra', 'Bhalla', 'Kaul', 'Prasad',
+  'Ganguly', 'Subramanian', 'Trivedi', 'Waghmare', 'Fernandes', 'Bhattacharya', 'Rastogi', 'Anand',
+  'Chakraborty', 'Balakrishnan', 'Hegde', 'Vaidya', 'Sridhar', 'Lal', 'Purohit', 'Chopra',
+  'Ramachandran', 'Dixit', 'Kamath', 'Nambiar', 'Sarkar', 'Bajaj', 'Venkatesan', 'Grewal',
 ];
 
 const BANKS = ['State Bank of India', 'HDFC Bank', 'ICICI Bank', 'Axis Bank', 'Kotak Mahindra Bank'];
+
+/** Headcount to generate. SEED_EMPLOYEES overrides it. */
+const DEFAULT_EMPLOYEES = 350;
+
+function employeeCountFromEnv(): number {
+  const raw = process.env.SEED_EMPLOYEES;
+  if (raw === undefined || raw.trim() === '') {
+    return DEFAULT_EMPLOYEES;
+  }
+
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < DEMO_ACCOUNTS.length || value > 20_000) {
+    throw new Error(
+      `SEED_EMPLOYEES must be a whole number between ${DEMO_ACCOUNTS.length} and 20000, ` +
+        `got '${raw}'. The lower bound is the number of demo accounts, which all have to exist.`,
+    );
+  }
+  return value;
+}
 
 /** The accounts a judge logs in with. One per role, so RBAC can be demonstrated. */
 export const DEMO_ACCOUNTS = [
@@ -103,7 +143,10 @@ export async function seedPeople(
   const contracts: SeededContract[] = [];
   const departmentCodes = Object.keys(reference.departmentIds);
 
-  const totalEmployees = 60;
+  // Configurable so the demo can be run at whatever size suits the machine.
+  // Everything else -- contracts, attendance, leave, payroll history -- is
+  // generated per employee, so this one number scales the whole database.
+  const totalEmployees = employeeCountFromEnv();
   const scheduleNames = Object.keys(reference.scheduleIds);
 
   for (let index = 0; index < totalEmployees; index += 1) {

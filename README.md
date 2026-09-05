@@ -261,10 +261,10 @@ first-party and no CORS negotiation is needed in development.
 
 ### Seeded data
 
-60 employees · 84 contracts, a third of them with more than one so contract
-history is non-trivial · ~4,800 attendance records including deliberate late
-arrivals, absences, forgotten check-outs and authorised corrections · 225
-allocations · 202 leave requests · three months of finalized payroll, produced by
+350 employees · 507 contracts, a third of them with more than one so contract
+history is non-trivial · ~40,000 attendance records including deliberate late
+arrivals, absences, forgotten check-outs and authorised corrections · 1,276
+allocations · 1,045 leave requests · six months of finalized payroll, produced by
 running the real engine rather than by inserting numbers.
 
 Two employees have no bank details on purpose, so the `MISSING_BANK` warning
@@ -303,6 +303,14 @@ script against a real Postgres service — see `.github/workflows/ci.yml`.
 
 `verify:flows` needs the API running. It reserves fresh payroll periods from live
 history on each run, so it is safe to run repeatedly.
+
+The seed builds 350 employees with six months of attendance, leave and payroll
+behind them. `SEED_EMPLOYEES` scales the whole database, since everything else is
+generated per employee:
+
+```bash
+SEED_EMPLOYEES=60 npm run db:reset    # smaller, for a quicker loop
+```
 
 ---
 

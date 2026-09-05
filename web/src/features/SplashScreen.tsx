@@ -82,7 +82,7 @@ export function SplashScreen({ onContinue }: Props) {
         <span className="splash__mark" aria-hidden="true">PP</span>
         <h1 className="splash__name">PeoplePay360</h1>
         <p className="splash__quote">
-          Pay is not stored. It is derived.
+          Payroll Made Simple
         </p>
       </div>
     </div>

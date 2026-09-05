@@ -18,7 +18,10 @@ import type { SeededEmployee } from './people.ts';
 type ScheduleLine = { day_of_week: number; start_time: string; end_time: string };
 
 /** How far back attendance and leave history reaches. */
-const HISTORY_MONTHS = 4;
+const HISTORY_MONTHS = 6;
+
+/** Punches per INSERT. Large enough to matter, small enough to stay readable. */
+const ATTENDANCE_BATCH = 1_000;
 
 export async function seedAttendance(
   client: TransactionClient,
@@ -40,6 +43,7 @@ export async function seedAttendance(
 
   const historyStart = addDays(today, -HISTORY_MONTHS * 30);
   let inserted = 0;
+  const pending: PendingPunch[] = [];
 
   for (const employee of employees) {
     const schedule = linesBySchedule.get(employee.scheduleId) ?? [];
@@ -91,31 +95,84 @@ export async function seedAttendance(
 
       const wasCorrected = !forgotCheckOut && random.chance(0.03);
 
-      await client.query(
-        `INSERT INTO attendance_records
-           (employee_id, check_in, check_out, status, is_manually_edited,
-            edited_by_user_id, edited_at, edit_reason)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-        [
-          employee.id,
-          checkIn,
-          checkOut,
-          status,
-          wasCorrected,
-          wasCorrected ? correctingUserId : null,
-          wasCorrected ? checkIn : null,
-          wasCorrected ? random.pick([
-            'Employee forgot to check in; corrected from building access log.',
-            'Badge reader outage, times confirmed with the reporting manager.',
-            'Check-out recorded after the employee had already left.',
-          ]) : null,
-        ],
-      );
-      inserted += 1;
+      pending.push({
+        employeeId: employee.id,
+        checkIn,
+        checkOut,
+        status,
+        wasCorrected,
+        editedBy: wasCorrected ? correctingUserId : null,
+        editedAt: wasCorrected ? checkIn : null,
+        editReason: wasCorrected ? random.pick([
+          'Employee forgot to check in; corrected from building access log.',
+          'Badge reader outage, times confirmed with the reporting manager.',
+          'Check-out recorded after the employee had already left.',
+        ]) : null,
+      });
+
+      if (pending.length >= ATTENDANCE_BATCH) {
+        inserted += await flushAttendance(client, pending);
+      }
     }
   }
 
+  inserted += await flushAttendance(client, pending);
   return inserted;
+}
+
+type PendingPunch = {
+  employeeId: number;
+  checkIn: string;
+  checkOut: string | null;
+  status: string;
+  wasCorrected: boolean;
+  editedBy: number | null;
+  editedAt: string | null;
+  editReason: string | null;
+};
+
+/**
+ * Writes a batch of punches in one statement and empties the buffer.
+ *
+ * At the seed's full size this is around thirty thousand rows, and one INSERT
+ * each meant thirty thousand round trips -- each also firing the audit trigger
+ * and re-checking the overlap exclusion constraint. Batched, the seed is a
+ * couple of minutes shorter and the transaction holds its locks for less time.
+ *
+ * Chunked rather than sent as one array so the parameter arrays stay a sane
+ * size and a failure names a batch rather than the whole run.
+ */
+async function flushAttendance(
+  client: TransactionClient,
+  pending: PendingPunch[],
+): Promise<number> {
+  if (pending.length === 0) {
+    return 0;
+  }
+
+  await client.query(
+    `INSERT INTO attendance_records
+       (employee_id, check_in, check_out, status, is_manually_edited,
+        edited_by_user_id, edited_at, edit_reason)
+     SELECT * FROM unnest(
+       $1::bigint[], $2::timestamptz[], $3::timestamptz[], $4::text[],
+       $5::boolean[], $6::bigint[], $7::timestamptz[], $8::text[]
+     )`,
+    [
+      pending.map((row) => row.employeeId),
+      pending.map((row) => row.checkIn),
+      pending.map((row) => row.checkOut),
+      pending.map((row) => row.status),
+      pending.map((row) => row.wasCorrected),
+      pending.map((row) => row.editedBy),
+      pending.map((row) => row.editedAt),
+      pending.map((row) => row.editReason),
+    ] as never,
+  );
+
+  const written = pending.length;
+  pending.length = 0;
+  return written;
 }
 
 function shiftMinutes(day: IsoDate, hour: number, minute: number, offset: number): string {

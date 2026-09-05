@@ -16,7 +16,7 @@ import { seedAttendance, seedTimeOff } from './seeds/operations.ts';
 import { seedPayrollHistory } from './seeds/payroll_history.ts';
 
 const RANDOM_SEED = 20260905;
-const MONTHS_OF_PAYROLL_HISTORY = 3;
+const MONTHS_OF_PAYROLL_HISTORY = 6;
 
 async function main(): Promise<void> {
   const random = createRandom(RANDOM_SEED);
