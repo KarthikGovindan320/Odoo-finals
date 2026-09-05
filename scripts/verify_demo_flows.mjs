@@ -49,25 +49,33 @@ await call('POST', '/auth/login', {
 });
 
 /**
- * Each run needs its own payroll periods. Re-using one would hit the platform's
- * own rules -- an employee already paid for a period is ineligible, and approved
- * leave cannot overlap approved leave -- which are correct behaviours we do not
- * want to fight. Periods advance by one month per minute of wall clock, well past
- * anything the seed touches.
+ * Each run needs payroll periods nobody has used, because the platform's own
+ * rules -- an employee already paid for a period is ineligible, approved leave
+ * cannot overlap approved leave -- would correctly reject a repeat. Rather than
+ * guessing from the clock, ask the database where payroll history currently ends
+ * and start one month after it. That never collides, however often it runs.
  */
-const runIndex = Math.floor(Date.now() / 60_000) % 600;
-const stamp = String(runIndex).padStart(3, '0');
-
-function futureMonth(offset) {
-  const month = ((runIndex * 2 + offset) % 12) + 1;
-  const year = 2028 + Math.floor((runIndex * 2 + offset) / 12);
-  const start = `${year}-${String(month).padStart(2, '0')}-01`;
-  const end = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+function monthAfter(isoDate, step) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(1);
+  date.setUTCMonth(date.getUTCMonth() + step);
+  const start = date.toISOString().slice(0, 10);
+  const end = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0))
+    .toISOString()
+    .slice(0, 10);
   return { start, end };
 }
 
-const period = futureMonth(0);
-const secondPeriod = futureMonth(1);
+async function reservePeriods() {
+  const existing = await call('GET', '/payruns?page_size=1&sort=period');
+  const latest = existing.body.rows[0]?.period_end ?? new Date().toISOString().slice(0, 10);
+  return { first: monthAfter(latest, 1), second: monthAfter(latest, 2) };
+}
+
+const { first: period, second: secondPeriod } = await reservePeriods();
+const stamp = period.start.slice(0, 7);
+console.log(`  using periods ${period.start} and ${secondPeriod.start}`);
+
 const structures = await call('GET', '/salary/structures');
 const regular = structures.body.rows.find((r) => r.code === 'REGULAR');
 
@@ -134,7 +142,7 @@ const paidType = types.body.rows.find((t) => t.code === 'PAID');
 
 // Inside the seeded allocation window (this calendar year) and clear of the
 // seeded leave history, which ends today. December is reliably free.
-const leaveDay = 1 + (runIndex % 20);
+const leaveDay = 1 + (Number(period.start.slice(5, 7)) % 20);
 const leaveWindow = {
   from: `${new Date().getUTCFullYear()}-12-${String(leaveDay).padStart(2, '0')}`,
   to: `${new Date().getUTCFullYear()}-12-${String(leaveDay + 1).padStart(2, '0')}`,
