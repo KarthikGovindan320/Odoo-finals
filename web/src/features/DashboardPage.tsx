@@ -9,6 +9,7 @@ import { useState } from 'react';
 
 import { queryString } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
+import { useReference } from '../lib/use_reference.ts';
 import { formatMoney, formatMoneyShort, formatMoneyWhole, formatNumber } from '../lib/format.ts';
 import { AlertList, Badge, Panel } from '../components/Chrome.tsx';
 import { BarChart, LineChart } from '../components/Charts.tsx';
@@ -51,7 +52,7 @@ export function DashboardPage() {
   const [departmentId, setDepartmentId] = useState('');
   const [employmentTypeId, setEmploymentTypeId] = useState('');
 
-  const reference = useResource<Reference>('/reference');
+  const reference = useReference();
   const path = `/dashboard${queryString({
     period_start: periodStart,
     period_end: periodEnd,

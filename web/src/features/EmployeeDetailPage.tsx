@@ -11,7 +11,7 @@ import { useNavigate, useParams } from 'react-router';
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { Badge, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
+import { Badge, DetailRow, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
 import { EmployeeFormModal } from './EmployeeFormModal.tsx';
 
 type EmployeeDetail = {
@@ -25,7 +25,7 @@ type EmployeeDetail = {
   department_name: string | null; job_title: string | null;
   employment_type_name: string | null; manager_name: string | null; schedule_name: string | null;
   bank_name: string | null; bank_account_number: string | null; bank_ifsc: string | null;
-  address: string | null; current_wage: number | null;
+  address: string | null; current_wage: number | null; current_wage_type: string | null;
   contract_count: number; attendance_count: number;
   time_off_count: number; allocation_count: number; payslip_count: number;
 };
@@ -72,7 +72,10 @@ export function EmployeeDetailPage() {
           <StatusBar steps={['active', 'on_leave', 'terminated']} current={data.status} terminal={[]} />
           {data.current_wage !== null && (
             <span className="muted" style={{ fontSize: 13 }}>
-              Current wage <strong style={{ color: 'var(--text)' }}>{formatMoney(data.current_wage)}</strong> / month
+              {/* The unit comes from the contract. Hardcoding "/ month" printed
+                  an hourly contract's rate as though it were a monthly salary. */}
+              Current wage <strong style={{ color: 'var(--text)' }}>{formatMoney(data.current_wage)}</strong>
+              {data.current_wage_type === 'hourly' ? ' / hour' : ' / month'}
             </span>
           )}
         </div>
@@ -185,16 +188,5 @@ export function EmployeeDetailPage() {
         />
       )}
     </>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="detail-row">
-      <dt>{label}</dt>
-      <dd>
-        {value === null || value === undefined || value === '' ? <span className="muted">—</span> : value}
-      </dd>
-    </div>
   );
 }

@@ -7,7 +7,7 @@
  * stored as a counter.
  */
 import { useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import type { FormEvent } from 'react';
 
 import { api, ApiError, queryString } from '../lib/api.ts';
@@ -17,6 +17,7 @@ import { useAuth } from '../lib/auth.tsx';
 import { Badge, Modal, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { SelectField, TextAreaField, TextField } from '../components/Field.tsx';
+import { EmployeePicker } from '../components/EmployeePicker.tsx';
 import { timeOffAllocationInput, timeOffRequestInput } from '../../../shared/schemas/hr.ts';
 
 type RequestRow = {
@@ -85,13 +86,13 @@ export function TimeOffPage() {
       {employeeFilter !== '' && (
         <div className="alert alert--info">
           <span>Filtered to one employee.</span>
-          <a href={`/time-off?tab=${tab}`}>Show everyone</a>
+          <Link to={`/time-off?tab=${tab}`}>Show everyone</Link>
         </div>
       )}
 
       {tab === 'requests' && <RequestsTab employeeFilter={employeeFilter} canApprove={can('timeoff:approve')} canCreate={can('timeoff:write')} />}
       {tab === 'allocations' && <AllocationsTab employeeFilter={employeeFilter} canManage={can('timeoff:approve')} />}
-      {tab === 'types' && <TypesTab />}
+      {tab === 'types' && <TypesTab canManage={can('timeoff_type:write')} />}
     </>
   );
 }
@@ -110,17 +111,23 @@ function RequestsTab({
   const [creating, setCreating] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [deciding, setDeciding] = useState<{ row: RequestRow; action: 'approve' | 'refuse' } | null>(null);
 
   const path = `/time-off/requests${queryString({
     employee_id: employeeFilter, state, page, page_size: 25,
   })}`;
   const { data, loading, error, reload } = useResource<Page<RequestRow>>(path);
 
-  const decide = async (id: number, action: 'approve' | 'refuse'): Promise<void> => {
+  const decide = async (
+    id: number,
+    action: 'approve' | 'refuse',
+    decisionNote: string,
+  ): Promise<void> => {
     setBusyId(id);
     setDecisionError(null);
     try {
-      await api.post(`/time-off/requests/${id}/${action}`, { decision_note: '' });
+      await api.post(`/time-off/requests/${id}/${action}`, { decision_note: decisionNote });
+      setDeciding(null);
       reload();
     } catch (caught: unknown) {
       // A refused approval is usually a real business answer -- no allocation
@@ -162,18 +169,28 @@ function RequestsTab({
     ...(canApprove
       ? [{
           key: 'actions', header: '', numeric: true,
-          render: (row: RequestRow) => (
-            <span style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-              {row.state !== 'approved' && (
-                <button className="btn btn--sm btn--primary" disabled={busyId === row.id}
-                  onClick={() => void decide(row.id, 'approve')}>Approve</button>
-              )}
-              {row.state !== 'refused' && (
-                <button className="btn btn--sm btn--danger" disabled={busyId === row.id}
-                  onClick={() => void decide(row.id, 'refuse')}>Refuse</button>
-              )}
-            </span>
-          ),
+          // A cancelled request is closed, and the server refuses either
+          // decision on it. Offering buttons that are known to fail turns the
+          // workflow into a guessing game.
+          render: (row: RequestRow) => {
+            const decidable = row.state === 'to_approve' || row.state === 'draft'
+              || row.state === 'approved' || row.state === 'refused';
+            if (!decidable) {
+              return <span className="muted">—</span>;
+            }
+            return (
+              <span style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                {row.state !== 'approved' && (
+                  <button className="btn btn--sm btn--primary" disabled={busyId === row.id}
+                    onClick={() => setDeciding({ row, action: 'approve' })}>Approve</button>
+                )}
+                {row.state !== 'refused' && (
+                  <button className="btn btn--sm btn--danger" disabled={busyId === row.id}
+                    onClick={() => setDeciding({ row, action: 'refuse' })}>Refuse</button>
+                )}
+              </span>
+            );
+          },
         }]
       : []),
   ];
@@ -217,29 +234,92 @@ function RequestsTab({
         <RequestFormModal onClose={() => setCreating(false)}
           onSaved={() => { setCreating(false); reload(); }} />
       )}
+
+      {deciding !== null && (
+        <DecisionModal
+          request={deciding.row}
+          action={deciding.action}
+          busy={busyId === deciding.row.id}
+          onCancel={() => setDeciding(null)}
+          onConfirm={(note) => void decide(deciding.row.id, deciding.action, note)}
+        />
+      )}
     </>
   );
 }
 
-function useEmployeeOptions() {
-  const employees = useResource<Page<{
-    id: number; first_name: string; last_name: string; employee_number: string;
-  }>>('/employees?page_size=200');
+/**
+ * Approve or refuse, with a note.
+ *
+ * decision_note has always been stored, returned by the API and rendered in the
+ * request row -- the approve and refuse buttons simply sent an empty string, so
+ * the field could never hold anything. Refusing someone's leave without being
+ * able to say why is the case that makes this worth a dialog rather than a
+ * bare button.
+ */
+function DecisionModal({
+  request, action, busy, onCancel, onConfirm,
+}: {
+  request: RequestRow;
+  action: 'approve' | 'refuse';
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (note: string) => void;
+}) {
+  const [note, setNote] = useState('');
+  const approving = action === 'approve';
 
-  return (employees.data?.rows ?? []).map((item) => ({
-    value: item.id,
-    label: `${item.employee_number} — ${item.first_name} ${item.last_name}`,
-  }));
+  return (
+    <Modal
+      title={`${approving ? 'Approve' : 'Refuse'} time off — ${request.employee_name}`}
+      onClose={onCancel}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button
+            type="button"
+            className={approving ? 'btn btn--primary' : 'btn btn--danger'}
+            disabled={busy}
+            onClick={() => onConfirm(note)}
+          >
+            {busy ? 'Saving…' : approving ? 'Approve request' : 'Refuse request'}
+          </button>
+        </>
+      }
+    >
+      <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+        {request.type_name} · {formatDate(request.date_from)} → {formatDate(request.date_to)} ·{' '}
+        {Number(request.requested_amount)} {request.unit}
+        {Number(request.requested_amount) === 1 ? '' : 's'}
+        {approving && request.state === 'refused' && ' · previously refused'}
+      </p>
+      {approving ? (
+        <p className="confirm__body">
+          This draws the balance from the employee&rsquo;s allocations, oldest expiring first.
+        </p>
+      ) : (
+        <p className="confirm__body">
+          If this request was approved, refusing it returns the balance it consumed.
+        </p>
+      )}
+      <TextAreaField
+        label="Note"
+        name="decision_note"
+        value={note}
+        hint="Recorded against the decision and shown to the employee. Optional."
+        onChange={(event) => setNote(event.target.value)}
+      />
+    </Modal>
+  );
 }
 
 function RequestFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const employeeOptions = useEmployeeOptions();
   const types = useResource<{ rows: TypeRow[] }>('/time-off/types');
 
   const today = new Date().toISOString().slice(0, 10);
   const [values, setValues] = useState<Record<string, string>>({
     employee_id: '', time_off_type_id: '', date_from: today, date_to: today,
-    requested_amount: '1', reason: '',
+    reason: '',
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
@@ -295,9 +375,9 @@ function RequestFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
 
       <form id="request-form" onSubmit={(event) => void submit(event)} noValidate>
         <div className="form-grid">
-          <SelectField label="Employee" name="employee_id" required placeholder="Choose an employee"
-            value={values.employee_id} error={errors.employee_id} onChange={set('employee_id')}
-            options={employeeOptions} />
+          <EmployeePicker label="Employee" required
+            value={values.employee_id} error={errors.employee_id}
+            onChange={(id) => setValues((previous) => ({ ...previous, employee_id: id }))} />
           <SelectField label="Time off type" name="time_off_type_id" required placeholder="Choose a type"
             value={values.time_off_type_id} error={errors.time_off_type_id}
             onChange={set('time_off_type_id')}
@@ -309,11 +389,15 @@ function RequestFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: 
             error={errors.date_from} onChange={set('date_from')} />
           <TextField label="To" name="date_to" type="date" required value={values.date_to}
             error={errors.date_to} onChange={set('date_to')} />
-          <TextField label="Duration" name="requested_amount" type="number" step="0.5" required
-            hint="Days or hours, depending on the type."
-            value={values.requested_amount} error={errors.requested_amount}
-            onChange={set('requested_amount')} />
         </div>
+
+        {/* Duration is not asked for. It is counted from the dates against the
+            employee's working schedule, server-side, so that the days balance is
+            charged for and the days payroll treats as leave are the same days. */}
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          Duration is worked out from these dates and the employee&rsquo;s working schedule —
+          weekends and non-working days are not counted.
+        </p>
         <TextAreaField label="Reason" name="reason" value={values.reason} error={errors.reason}
           onChange={set('reason')} />
       </form>
@@ -337,7 +421,7 @@ function AllocationsTab({
   const path = `/time-off/allocations${queryString({
     employee_id: employeeFilter, page, page_size: 25,
   })}`;
-  const { data, loading, error, reload } = useResource<{ rows: AllocationRow[] }>(path);
+  const { data, loading, error, reload } = useResource<Page<AllocationRow>>(path);
 
   const approve = async (id: number): Promise<void> => {
     setBusyId(id);
@@ -397,8 +481,8 @@ function AllocationsTab({
         <DataTable columns={columns} rows={data?.rows ?? []} rowKey={(row) => row.id}
           loading={loading}
           emptyMessage="No allocations yet. An employee needs one before paid leave can be approved." />
-        <Pagination page={page} totalPages={page + ((data?.rows.length ?? 0) === 25 ? 1 : 0)}
-          total={data?.rows.length ?? 0} onPageChange={setPage} />
+        <Pagination page={data?.page ?? 1} totalPages={data?.total_pages ?? 1}
+          total={data?.total ?? 0} onPageChange={setPage} />
       </Panel>
 
       {creating && (
@@ -410,7 +494,6 @@ function AllocationsTab({
 }
 
 function AllocationFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const employeeOptions = useEmployeeOptions();
   const types = useResource<{ rows: TypeRow[] }>('/time-off/types');
 
   const year = new Date().getUTCFullYear();
@@ -471,9 +554,9 @@ function AllocationFormModal({ onClose, onSaved }: { onClose: () => void; onSave
 
       <form id="allocation-form" onSubmit={(event) => void submit(event)} noValidate>
         <div className="form-grid">
-          <SelectField label="Employee" name="employee_id" required placeholder="Choose an employee"
-            value={values.employee_id} error={errors.employee_id} onChange={set('employee_id')}
-            options={employeeOptions} />
+          <EmployeePicker label="Employee" required
+            value={values.employee_id} error={errors.employee_id}
+            onChange={(id) => setValues((previous) => ({ ...previous, employee_id: id }))} />
           <SelectField label="Time off type" name="time_off_type_id" required placeholder="Choose a type"
             value={values.time_off_type_id} error={errors.time_off_type_id}
             onChange={set('time_off_type_id')}
@@ -497,13 +580,26 @@ function AllocationFormModal({ onClose, onSaved }: { onClose: () => void; onSave
 
 /* ------------------------------------------------------------------ types -- */
 
-function TypesTab() {
-  const { data, loading, error } = useResource<{ rows: TypeRow[] }>('/time-off/types');
+function TypesTab({ canManage }: { canManage: boolean }) {
+  const { data, loading, error, reload } = useResource<{ rows: TypeRow[] }>('/time-off/types');
+  const [creating, setCreating] = useState(false);
 
   return (
     <>
       {error !== null && <div className="error-box">{error}</div>}
       <Panel flush>
+        {/* POST /time-off/types existed from the start with no control anywhere
+            that called it, so the leave catalogue was fixed at whatever the seed
+            created. */}
+        {canManage && (
+          <div className="toolbar">
+            <span className="toolbar__count">{data?.rows.length ?? 0} types</span>
+            <span className="toolbar__spacer" />
+            <button className="btn btn--primary btn--sm" onClick={() => setCreating(true)}>
+              New time off type
+            </button>
+          </div>
+        )}
         {loading ? (
           <div className="loading">Loading…</div>
         ) : (
@@ -539,6 +635,93 @@ function TypesTab() {
         An unpaid type carries a payroll rule code, which is how approved unpaid leave becomes a
         loss-of-pay deduction on the payslip.
       </p>
+
+      {creating && (
+        <TypeFormModal
+          onClose={() => setCreating(false)}
+          onSaved={() => { setCreating(false); reload(); }}
+        />
+      )}
     </>
+  );
+}
+
+/** Creating a leave type. */
+function TypeFormModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const [values, setValues] = useState<Record<string, string>>({
+    code: '', name: '', unit: 'day', color_token: 'plum',
+  });
+  const [paid, setPaid] = useState(true);
+  const [requiresAllocation, setRequiresAllocation] = useState(true);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+
+  const set = (name: string) => (event: { target: { value: string } }): void =>
+    setValues((previous) => ({ ...previous, [name]: event.target.value }));
+
+  const submit = async (event: FormEvent): Promise<void> => {
+    event.preventDefault();
+    setFormError(null);
+    setErrors({});
+    setBusy(true);
+
+    try {
+      await api.post('/time-off/types', {
+        ...values,
+        is_paid: paid,
+        requires_allocation: requiresAllocation,
+        requires_approval: true,
+      });
+      onSaved();
+    } catch (error: unknown) {
+      if (error instanceof ApiError) {
+        const fields = error.fieldMap();
+        if (Object.keys(fields).length > 0) setErrors(fields);
+        else setFormError(error.message);
+      } else {
+        setFormError('Could not create the time off type.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal
+      title="New time off type"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn btn--primary" form="type-form" type="submit" disabled={busy}>
+            {busy ? 'Saving…' : 'Create type'}
+          </button>
+        </>
+      }
+    >
+      {formError !== null && <div className="error-box" role="alert">{formError}</div>}
+
+      <form id="type-form" onSubmit={(event) => void submit(event)} noValidate>
+        <div className="form-grid">
+          <TextField label="Code" name="code" required value={values.code}
+            error={errors.code} onChange={set('code')} hint="Short and uppercase, e.g. SICK." />
+          <TextField label="Name" name="name" required value={values.name}
+            error={errors.name} onChange={set('name')} />
+          <SelectField label="Counted in" name="unit" value={values.unit}
+            error={errors.unit} onChange={set('unit')}
+            options={[{ value: 'day', label: 'Days' }, { value: 'hour', label: 'Hours' }]} />
+          <SelectField label="Paid" name="is_paid" value={paid ? 'yes' : 'no'}
+            onChange={(event) => setPaid(event.target.value === 'yes')}
+            hint="An unpaid type feeds the loss-of-pay deduction."
+            options={[{ value: 'yes', label: 'Paid leave' }, { value: 'no', label: 'Unpaid leave' }]} />
+          <SelectField label="Needs an allocation" name="requires_allocation"
+            value={requiresAllocation ? 'yes' : 'no'}
+            onChange={(event) => setRequiresAllocation(event.target.value === 'yes')}
+            hint="Allocated types draw down a balance when approved."
+            options={[{ value: 'yes', label: 'Yes — draws balance' }, { value: 'no', label: 'No' }]} />
+        </div>
+      </form>
+    </Modal>
   );
 }
