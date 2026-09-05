@@ -6,11 +6,13 @@
  * which is why a June payslip still explains itself in September even if the
  * rules have since changed.
  */
+import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 
+import { openPdf } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
-import { Badge, Panel, StatusBar } from '../components/Chrome.tsx';
+import { Badge, DetailRow, PAYROLL_WORKFLOW, Panel, StatusBar } from '../components/Chrome.tsx';
 
 type PayslipDetail = {
   id: number; number: string; payrun_id: number; payrun_name: string; payrun_state: string;
@@ -24,11 +26,9 @@ type PayslipDetail = {
   bank_name: string | null; bank_account_number: string | null;
   lines: Array<{
     rule_code: string; rule_name: string; category_code: string;
-    category_sign: number; amount: number;
+    category_sign: number; amount: number; source_expression: string;
   }>;
 };
-
-const WORKFLOW = ['draft', 'computed', 'validated', 'paid'];
 
 /** Keeps the badge in step with the ledger rail colour for each category. */
 const CATEGORY_TONE: Record<string, string> = {
@@ -43,6 +43,8 @@ export function PayslipDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { data, loading, error } = useResource<PayslipDetail>(`/payslips/${id}`);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+  const [openingPdf, setOpeningPdf] = useState(false);
 
   if (loading) return <div className="loading">Loading payslip…</div>;
   if (error !== null) return <div className="error-box">{error}</div>;
@@ -59,28 +61,45 @@ export function PayslipDetailPage() {
           </span>
         </div>
         <div className="page__actions">
-          <a className="btn btn--primary" href={`/api/v1/payslips/${data.id}/pdf`}
-            target="_blank" rel="noreferrer">
-            Print payslip (PDF)
-          </a>
+          {/* Fetched through the api client rather than linked directly, so a
+              403 or a 500 becomes a message instead of a tab full of raw JSON,
+              and the URL is not assumed to be same-origin. */}
+          <button
+            className="btn btn--primary"
+            disabled={openingPdf}
+            onClick={() => {
+              setOpeningPdf(true);
+              setPdfError(null);
+              void openPdf(`/payslips/${data.id}/pdf`)
+                .catch((caught: unknown) =>
+                  setPdfError(
+                    caught instanceof Error ? caught.message : 'Could not open the payslip PDF.',
+                  ))
+                .finally(() => setOpeningPdf(false));
+            }}
+          >
+            {openingPdf ? 'Preparing…' : 'Print payslip (PDF)'}
+          </button>
         </div>
       </div>
 
+      {pdfError !== null && <div className="error-box" role="alert">{pdfError}</div>}
+
       <Panel>
-        <StatusBar steps={WORKFLOW} current={data.state} />
+        <StatusBar steps={PAYROLL_WORKFLOW} current={data.state} />
       </Panel>
 
       <div className="grid-2">
         <Panel title="Identification">
           <dl style={{ margin: 0 }}>
-            <Row label="Employee" value={`${data.employee_name} (${data.employee_number})`} />
-            <Row label="Department" value={data.department_name} />
-            <Row label="Position" value={data.job_title} />
-            <Row label="Contract" value={data.contract_reference} />
-            <Row label="Salary structure" value={data.structure_name} />
-            <Row label="Payrun" value={data.payrun_name} />
-            <Row label="Status" value={<Badge variant={stateVariant(data.state)}>{humanize(data.state)}</Badge>} />
-            <Row
+            <DetailRow label="Employee" value={`${data.employee_name} (${data.employee_number})`} />
+            <DetailRow label="Department" value={data.department_name} />
+            <DetailRow label="Position" value={data.job_title} />
+            <DetailRow label="Contract" value={data.contract_reference} />
+            <DetailRow label="Salary structure" value={data.structure_name} />
+            <DetailRow label="Payrun" value={data.payrun_name} />
+            <DetailRow label="Status" value={<Badge variant={stateVariant(data.state)}>{humanize(data.state)}</Badge>} />
+            <DetailRow
               label="Bank"
               value={
                 data.bank_account_number === null
@@ -93,11 +112,11 @@ export function PayslipDetailPage() {
 
         <Panel title="Worked time">
           <dl style={{ margin: 0 }}>
-            <Row label="Scheduled days" value={String(Number(data.scheduled_days))} />
-            <Row label="Worked days" value={String(Number(data.worked_days))} />
-            <Row label="Worked hours" value={`${Number(data.worked_hours)} h`} />
-            <Row label="Paid leave days" value={String(Number(data.paid_leave_days))} />
-            <Row
+            <DetailRow label="Scheduled days" value={String(Number(data.scheduled_days))} />
+            <DetailRow label="Worked days" value={String(Number(data.worked_days))} />
+            <DetailRow label="Worked hours" value={`${Number(data.worked_hours)} h`} />
+            <DetailRow label="Paid leave days" value={String(Number(data.paid_leave_days))} />
+            <DetailRow
               label="Unpaid leave days"
               value={
                 Number(data.unpaid_leave_days) > 0
@@ -105,8 +124,8 @@ export function PayslipDetailPage() {
                   : '0'
               }
             />
-            <Row label="Overtime hours" value={`${Number(data.overtime_hours)} h`} />
-            <Row
+            <DetailRow label="Overtime hours" value={`${Number(data.overtime_hours)} h`} />
+            <DetailRow
               label="Proration"
               value={
                 Number(data.proration_factor) < 1
@@ -143,7 +162,16 @@ export function PayslipDetailPage() {
                   ].filter(Boolean).join(' ')}
                 >
                   <td className="ledger__code">{line.rule_code}</td>
-                  <td>{line.rule_name}</td>
+                  <td>
+                    {line.rule_name}
+                    {/* The expression actually evaluated, snapshotted when this
+                        payslip was computed. It was stored and selected all
+                        along but never rendered, which left the page's own
+                        promise -- that every line explains itself -- unkept. */}
+                    {line.source_expression !== '' && (
+                      <div className="ledger__source mono">{line.source_expression}</div>
+                    )}
+                  </td>
                   <td>
                     <Badge variant={CATEGORY_TONE[line.category_code] ?? 'petrol'}>
                       {line.category_code}
@@ -183,16 +211,5 @@ export function PayslipDetailPage() {
         </button>
       </div>
     </>
-  );
-}
-
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="detail-row">
-      <dt>{label}</dt>
-      <dd>
-        {value === null || value === undefined || value === '' ? <span className="muted">—</span> : value}
-      </dd>
-    </div>
   );
 }

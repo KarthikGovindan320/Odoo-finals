@@ -13,7 +13,7 @@ import { api, ApiError } from '../lib/api.ts';
 import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { Badge, Panel, StatusBar, WarningDigest } from '../components/Chrome.tsx';
+import { Badge, ConfirmDialog, PAYROLL_WORKFLOW, Panel, StatusBar, WarningDigest } from '../components/Chrome.tsx';
 
 type PayrunDetail = {
   id: number; name: string; salary_structure_id: number;
@@ -32,7 +32,83 @@ type PayrunDetail = {
   }>;
 };
 
-const WORKFLOW = ['draft', 'computed', 'validated', 'paid'];
+
+/**
+ * The four workflow actions, described in one place.
+ *
+ * `confirm` is present on the three that cannot be undone: validating freezes
+ * the payslips at the database level, marking paid asserts money has moved, and
+ * sending mails salary documents to everyone in the batch. Compute is repeatable
+ * and needs no gate.
+ */
+type PayrunAction = {
+  slug: string;
+  label: string;
+  busyLabel: string;
+  describe: (result: Record<string, number>) => string;
+  confirm?: {
+    title: string;
+    question: string;
+    confirmLabel: string;
+    detail: string;
+  };
+};
+
+function payrunActions(payslipCount: number): Record<string, PayrunAction> {
+  const people = `${payslipCount} payslip${payslipCount === 1 ? '' : 's'}`;
+
+  return {
+    compute: {
+      slug: 'compute',
+      label: 'Compute',
+      busyLabel: 'Computing…',
+      describe: (result) =>
+        `Computed ${result.payslipsComputed} payslip(s), ${result.payslipsFailed} could not be ` +
+        `computed, ${result.warnings} warning(s).`,
+    },
+    validate: {
+      slug: 'validate',
+      label: 'Validate',
+      busyLabel: 'Validating…',
+      describe: (result) => `Validated ${result.validated} payslip(s).`,
+      confirm: {
+        title: 'Validate this payrun?',
+        question: `This finalises ${people} and cannot be undone.`,
+        confirmLabel: 'Validate payrun',
+        detail:
+          'Once validated, the database refuses any change to the computed lines or amounts. ' +
+          'Recomputing will no longer be possible.',
+      },
+    },
+    'mark-paid': {
+      slug: 'mark-paid',
+      label: 'Mark paid',
+      busyLabel: 'Saving…',
+      describe: (result) => `Marked ${result.paid} payslip(s) paid.`,
+      confirm: {
+        title: 'Mark this payrun as paid?',
+        question: `This records that ${people} have actually been paid.`,
+        confirmLabel: 'Mark as paid',
+        detail: 'Only do this once the transfer has been made. It cannot be reversed.',
+      },
+    },
+    'send-payslips': {
+      slug: 'send-payslips',
+      label: 'Send payslips',
+      busyLabel: 'Sending…',
+      describe: (result) =>
+        `Sent ${result.sent}, failed ${result.failed}, skipped ${result.skipped} already delivered` +
+        ((result.no_email ?? 0) > 0 ? `, ${result.no_email} with no email address on file` : '') + '.',
+      confirm: {
+        title: 'Send payslips by email?',
+        question: `This emails a payslip to every employee in this payrun (${people}).`,
+        confirmLabel: 'Send payslips',
+        detail:
+          'Anyone who has already received theirs is skipped. Emails cannot be recalled once sent.',
+      },
+    },
+  };
+}
 
 export function PayrunDetailPage() {
   const { id } = useParams();
@@ -43,14 +119,15 @@ export function PayrunDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PayrunAction | null>(null);
 
-  const run = async (action: string, describe: (result: never) => string): Promise<void> => {
-    setBusy(action);
+  const run = async (action: PayrunAction): Promise<void> => {
+    setBusy(action.slug);
     setActionError(null);
     setNotice(null);
     try {
-      const result = await api.post<never>(`/payruns/${id}/${action}`);
-      setNotice(describe(result));
+      const result = await api.post<Record<string, number>>(`/payruns/${id}/${action.slug}`);
+      setNotice(action.describe(result));
       reload();
     } catch (caught: unknown) {
       // These failures are usually the workflow doing its job -- blockers
@@ -59,6 +136,7 @@ export function PayrunDetailPage() {
       setActionError(caught instanceof ApiError ? caught.message : 'The action could not be completed.');
     } finally {
       setBusy(null);
+      setPendingAction(null);
     }
   };
 
@@ -66,7 +144,17 @@ export function PayrunDetailPage() {
   if (error !== null) return <div className="error-box">{error}</div>;
   if (data === null) return null;
 
+  const actions = payrunActions(data.payslips.length);
   const blockers = data.warnings.filter((item) => item.severity === 'blocker');
+
+  /** Runs immediately, or opens the confirmation first. */
+  const start = (action: PayrunAction): void => {
+    if (action.confirm === undefined) {
+      void run(action);
+    } else {
+      setPendingAction(action);
+    }
+  };
   const totalNet = data.payslips
     .filter((slip) => slip.state !== 'cancelled')
     .reduce((total, slip) => total + Number(slip.net_amount), 0);
@@ -83,39 +171,35 @@ export function PayrunDetailPage() {
         </div>
         <div className="page__actions">
           {can('payrun:write') && (
-            <button className="btn" disabled={busy !== null || data.state === 'validated' || data.state === 'paid'}
-              onClick={() => void run('compute', (result: never) => {
-                const summary = result as unknown as {
-                  payslipsComputed: number; payslipsFailed: number; warnings: number;
-                };
-                return `Computed ${summary.payslipsComputed} payslip(s), ` +
-                  `${summary.payslipsFailed} could not be computed, ${summary.warnings} warning(s).`;
-              })}>
-              {busy === 'compute' ? 'Computing…' : 'Compute'}
+            <button
+              className="btn"
+              disabled={
+                busy !== null || data.state === 'validated' || data.state === 'paid'
+                || data.state === 'cancelled'
+              }
+              onClick={() => start(actions.compute as PayrunAction)}
+            >
+              {busy === 'compute' ? actions.compute?.busyLabel : actions.compute?.label}
             </button>
           )}
           {can('payrun:validate') && (
             <>
               <button className="btn btn--primary"
                 disabled={busy !== null || data.state !== 'computed'}
-                onClick={() => void run('validate', (result: never) =>
-                  `Validated ${(result as unknown as { validated: number }).validated} payslip(s).`)}>
-                {busy === 'validate' ? 'Validating…' : 'Validate'}
+                onClick={() => start(actions.validate as PayrunAction)}>
+                {busy === 'validate' ? actions.validate?.busyLabel : actions.validate?.label}
               </button>
               <button className="btn"
                 disabled={busy !== null || data.state !== 'validated'}
-                onClick={() => void run('mark-paid', (result: never) =>
-                  `Marked ${(result as unknown as { paid: number }).paid} payslip(s) paid.`)}>
-                {busy === 'mark-paid' ? 'Saving…' : 'Mark paid'}
+                onClick={() => start(actions['mark-paid'] as PayrunAction)}>
+                {busy === 'mark-paid' ? actions['mark-paid']?.busyLabel : actions['mark-paid']?.label}
               </button>
               <button className="btn"
                 disabled={busy !== null || (data.state !== 'validated' && data.state !== 'paid')}
-                onClick={() => void run('send-payslips', (result: never) => {
-                  const outcome = result as unknown as { sent: number; failed: number; skipped: number };
-                  return `Sent ${outcome.sent}, failed ${outcome.failed}, ` +
-                    `skipped ${outcome.skipped} already delivered.`;
-                })}>
-                {busy === 'send-payslips' ? 'Sending…' : 'Send payslips'}
+                onClick={() => start(actions['send-payslips'] as PayrunAction)}>
+                {busy === 'send-payslips'
+                  ? actions['send-payslips']?.busyLabel
+                  : actions['send-payslips']?.label}
               </button>
             </>
           )}
@@ -130,7 +214,7 @@ export function PayrunDetailPage() {
       <Panel>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center',
                       flexWrap: 'wrap', gap: 'var(--space-3)' }}>
-          <StatusBar steps={WORKFLOW} current={data.state} />
+          <StatusBar steps={PAYROLL_WORKFLOW} current={data.state} />
           <div style={{ display: 'flex', gap: 'var(--space-5)', fontSize: 13 }}>
             <span className="muted">
               Payslips <strong style={{ color: 'var(--text)' }}>{data.payslips.length}</strong>
@@ -230,6 +314,19 @@ export function PayrunDetailPage() {
       </Panel>
 
       <button className="btn" onClick={() => navigate('/payroll')}>← Back to payroll</button>
+
+      {pendingAction?.confirm !== undefined && (
+        <ConfirmDialog
+          title={pendingAction.confirm.title}
+          question={pendingAction.confirm.question}
+          detail={pendingAction.confirm.detail}
+          confirmLabel={pendingAction.confirm.confirmLabel}
+          destructive
+          busy={busy !== null}
+          onConfirm={() => void run(pendingAction)}
+          onCancel={() => setPendingAction(null)}
+        />
+      )}
     </>
   );
 }
