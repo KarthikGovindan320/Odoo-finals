@@ -11,7 +11,7 @@ import type { FormEvent } from 'react';
 import { ApiError } from '../lib/api.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { TextField } from '../components/Field.tsx';
-import { Modal } from '../components/Chrome.tsx';
+import { AppFooter, Modal } from '../components/Chrome.tsx';
 
 /**
  * The demo account switcher exists so a reviewer can change roles in seconds and
@@ -72,62 +72,65 @@ export function LoginPage() {
   };
 
   return (
-    <div className="login">
-      <div className="login__card">
-        <div className="login__brand">
-          <img className="topnav__mark" src="/logo-64.png" alt="" />
-          <span>
-            <h1 style={{ fontSize: 18, margin: 0 }}>PeoplePay360</h1>
-          </span>
-        </div>
-
-        {formError !== null && <div className="error-box" role="alert">{formError}</div>}
-
-        <form onSubmit={(event) => void submit(event)} noValidate>
-          <TextField
-            label="Email" name="email" type="email" autoComplete="username" required
-            value={email} error={fieldErrors.email}
-            onChange={(event) => setEmail(event.target.value)}
-          />
-          <TextField
-            label="Password" name="password" type="password" autoComplete="current-password" required
-            value={password} error={fieldErrors.password}
-            onChange={(event) => setPassword(event.target.value)}
-          />
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-3)' }}>
-            <button
-              type="button"
-              className="btn btn--link btn--sm"
-              onClick={() => setForgotPasswordOpen(true)}
-            >
-              Forgot password?
-            </button>
+    <div className="login-shell">
+      <div className="login">
+        <div className="login__card">
+          <div className="login__brand">
+            <img className="topnav__mark" src="/logo-64.png" alt="" />
+            <span>
+              <h1 style={{ fontSize: 18, margin: 0 }}>PeoplePay360</h1>
+            </span>
           </div>
-          <button className="btn btn--primary" type="submit" disabled={busy} style={{ width: '100%' }}>
-            {busy ? 'Signing in…' : 'Sign in'}
-          </button>
-        </form>
 
-        {SHOW_DEMO_ACCOUNTS && (
-        <div className="login__demo">
-          <strong>Demo accounts — click one to fill the form</strong>
-          {DEMO_ACCOUNTS.map((account) => (
-            <button
-              key={account.email}
-              type="button"
-              onClick={() => { setEmail(account.email); setPassword(DEMO_PASSWORD); }}
-            >
-              <strong style={{ flex: '0 0 130px', margin: 0, fontWeight: 600 }}>{account.role}</strong>
-              <span>{account.reach}</span>
+          {formError !== null && <div className="error-box" role="alert">{formError}</div>}
+
+          <form onSubmit={(event) => void submit(event)} noValidate>
+            <TextField
+              label="Email" name="email" type="email" autoComplete="username" required
+              value={email} error={fieldErrors.email}
+              onChange={(event) => setEmail(event.target.value)}
+            />
+            <TextField
+              label="Password" name="password" type="password" autoComplete="current-password" required
+              value={password} error={fieldErrors.password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 'var(--space-3)' }}>
+              <button
+                type="button"
+                className="btn btn--link btn--sm"
+                onClick={() => setForgotPasswordOpen(true)}
+              >
+                Forgot password?
+              </button>
+            </div>
+            <button className="btn btn--primary" type="submit" disabled={busy} style={{ width: '100%' }}>
+              {busy ? 'Signing in…' : 'Sign in'}
             </button>
-          ))}
+          </form>
+
+          {SHOW_DEMO_ACCOUNTS && (
+          <div className="login__demo">
+            <strong>Demo accounts — click one to fill the form</strong>
+            {DEMO_ACCOUNTS.map((account) => (
+              <button
+                key={account.email}
+                type="button"
+                onClick={() => { setEmail(account.email); setPassword(DEMO_PASSWORD); }}
+              >
+                <strong style={{ flex: '0 0 130px', margin: 0, fontWeight: 600 }}>{account.role}</strong>
+                <span>{account.reach}</span>
+              </button>
+            ))}
+          </div>
+          )}
         </div>
+
+        {forgotPasswordOpen && (
+          <ForgotPasswordModal onClose={() => setForgotPasswordOpen(false)} />
         )}
       </div>
-
-      {forgotPasswordOpen && (
-        <ForgotPasswordModal onClose={() => setForgotPasswordOpen(false)} />
-      )}
+      <AppFooter />
     </div>
   );
 }

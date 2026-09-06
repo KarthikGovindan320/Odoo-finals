@@ -118,6 +118,31 @@ a:hover { text-decoration: underline; }
 .page__subtitle { color: var(--text-2); font-size: var(--size-sm); max-width: 68ch; }
 .page__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; flex: 0 0 auto; }
 
+/* ══ Footer ══════════════════════════════════════════════════════════════ */
+
+.app-footer {
+  flex: 0 0 auto; text-align: center;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--size-xs); color: var(--text-3);
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+.app-footer a { color: var(--text-3); text-decoration: underline; }
+.app-footer a:hover { color: var(--accent-ink); }
+
+/* ══ Copy button ═════════════════════════════════════════════════════════ */
+
+/* Sits beside an employee's name. Same tap target as any icon-only control,
+   quieter than a bordered button since it is a convenience, not an action. */
+.copy-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; flex: 0 0 auto;
+  border: none; background: none; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.copy-btn svg { width: 14px; height: 14px; }
+.copy-btn:hover { color: var(--accent-ink); background: var(--accent-wash); }
+
 /* ══ Panels ══════════════════════════════════════════════════════════════ */
 
 .panel {
@@ -505,13 +530,17 @@ a:hover { text-decoration: underline; }
 
 /* ══ Login ═══════════════════════════════════════════════════════════════ */
 
+.login-shell { display: flex; flex-direction: column; min-height: 100%; }
 .login {
-  min-height: 100%; display: grid; place-items: center; padding: var(--space-4);
+  flex: 1 1 auto; display: grid; place-items: center; padding: var(--space-4);
   background:
     radial-gradient(1100px 520px at 12% -10%, rgba(11, 114, 133, 0.40), transparent 62%),
     radial-gradient(900px 480px at 96% 112%, rgba(210, 154, 28, 0.22), transparent 58%),
     var(--ink-900);
 }
+.login-shell .app-footer { background: var(--ink-900); border-top-color: rgba(255, 255, 255, 0.12); color: var(--text-on-dark-soft); }
+.login-shell .app-footer a { color: var(--text-on-dark-soft); }
+.login-shell .app-footer a:hover { color: #fff; }
 .login__card {
   background: var(--surface); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
   width: 100%; max-width: 408px; padding: var(--space-6) var(--space-5) var(--space-5);

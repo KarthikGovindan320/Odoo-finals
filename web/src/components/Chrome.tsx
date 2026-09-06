@@ -52,6 +52,48 @@ export function StatusBar({ steps, current, terminal = ['cancelled', 'refused'] 
   );
 }
 
+/* ------------------------------------------------------- copy employee id -- */
+
+/**
+ * Copies an employee's name and number to the clipboard in one click.
+ *
+ * Lists and detail screens are where a name gets pasted into an email or a
+ * search box next, so the button sits right beside the name rather than
+ * requiring a trip to the detail page first. `stopPropagation` matters here:
+ * the list row it sits inside is itself a click target that opens the record,
+ * and clicking Copy should not also navigate away from the list.
+ */
+export function CopyEmployeeButton({
+  name, employeeNumber,
+}: {
+  name: string;
+  employeeNumber: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const onClick = (event: React.MouseEvent<HTMLButtonElement>): void => {
+    event.stopPropagation();
+    event.preventDefault();
+
+    void navigator.clipboard.writeText(`${name} (${employeeNumber})`).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  return (
+    <button
+      type="button"
+      className="copy-btn"
+      onClick={onClick}
+      aria-label={copied ? 'Copied' : `Copy ${name}'s name and employee ID`}
+      title={copied ? 'Copied!' : 'Copy name and employee ID'}
+    >
+      <Icon name={copied ? 'check' : 'copy'} />
+    </button>
+  );
+}
+
 /* ----------------------------------------------------------- smart button -- */
 
 type SmartButtonProps = {
@@ -439,3 +481,20 @@ export function DetailRow({ label, value }: { label: string; value: ReactNode })
 
 /** The payrun and payslip lifecycle, named once. */
 export const PAYROLL_WORKFLOW = ['draft', 'computed', 'validated', 'paid'];
+
+/* ----------------------------------------------------------------- footer -- */
+
+/**
+ * The one line every screen ends on: where to go when something is wrong.
+ *
+ * Rendered once by the app shell rather than per page, so it is present on
+ * every route without every feature having to remember to include it.
+ */
+export function AppFooter() {
+  return (
+    <footer className="app-footer">
+      For any queries/complaints contact{' '}
+      <a href="mailto:vishnuprasad76543@gmail.com">vishnuprasad76543@gmail.com</a>
+    </footer>
+  );
+}

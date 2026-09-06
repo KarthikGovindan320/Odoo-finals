@@ -16,7 +16,7 @@ import { ExportButtons } from '../components/ExportButtons.tsx';
 import { useDebounced } from '../lib/use_debounced.ts';
 import { formatDate, formatMoney, stateVariant, humanize } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
-import { Badge, Panel, Toolbar } from '../components/Chrome.tsx';
+import { Badge, CopyEmployeeButton, Panel, Toolbar } from '../components/Chrome.tsx';
 import { DataTable, Pagination, type Column } from '../components/DataTable.tsx';
 import { EmployeeFormModal } from './EmployeeFormModal.tsx';
 
@@ -95,7 +95,13 @@ export function EmployeesPage() {
     { key: 'name', header: 'Employee', sortable: true,
       render: (row) => (
         <div>
-          <div style={{ fontWeight: 600 }}>{row.first_name} {row.last_name}</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-1)' }}>
+            <span style={{ fontWeight: 600 }}>{row.first_name} {row.last_name}</span>
+            <CopyEmployeeButton
+              name={`${row.first_name} ${row.last_name}`}
+              employeeNumber={row.employee_number}
+            />
+          </div>
           <div className="muted" style={{ fontSize: 12 }}>{row.work_email}</div>
         </div>
       ) },

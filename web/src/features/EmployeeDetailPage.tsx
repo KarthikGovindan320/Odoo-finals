@@ -18,7 +18,7 @@ import { useResource } from '../lib/use_resource.ts';
 import { formatDate, formatMoney, humanize, stateVariant } from '../lib/format.ts';
 import { useAuth } from '../lib/auth.tsx';
 import { useBackTo } from '../lib/use_back_to.ts';
-import { Badge, DetailRow, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
+import { Badge, CopyEmployeeButton, DetailRow, Panel, SmartButton, StatusBar } from '../components/Chrome.tsx';
 import { EmployeeFormModal } from './EmployeeFormModal.tsx';
 
 type EmployeeDetail = {
@@ -62,7 +62,13 @@ export function EmployeeDetailPage({ employeeId }: { employeeId?: number }) {
     <>
       <div className="page__header">
         <div className="page__title">
-          <h1>{data.first_name} {data.last_name}</h1>
+          <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)' }}>
+            <h1>{data.first_name} {data.last_name}</h1>
+            <CopyEmployeeButton
+              name={`${data.first_name} ${data.last_name}`}
+              employeeNumber={data.employee_number}
+            />
+          </span>
           <span className="page__subtitle">
             <span className="mono">{data.employee_number}</span>
             {data.job_title !== null && ` · ${data.job_title}`}

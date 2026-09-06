@@ -10,6 +10,7 @@ import type { ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
 
 import { useAuth } from '../lib/auth.tsx';
+import { AppFooter } from '../components/Chrome.tsx';
 import { LoginPage } from '../features/LoginPage.tsx';
 import { SplashScreen } from '../features/SplashScreen.tsx';
 import { hasSeenSplash, markSplashSeen } from '../lib/splash.ts';
@@ -227,6 +228,8 @@ export function App() {
         </Routes>
         </Suspense>
       </main>
+
+      <AppFooter />
     </div>
   );
 }

@@ -17,7 +17,9 @@ export type IconName =
   | 'calendar'
   | 'wallet'
   | 'receipt'
-  | 'fingerprint';
+  | 'fingerprint'
+  | 'copy'
+  | 'check';
 
 const PATHS: Record<IconName, React.ReactNode> = {
   // A sheet with ruled lines and a signature stroke: a signed agreement.
@@ -73,6 +75,19 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M4.5 2.75h11v14.5l-2.2-1.3-2.2 1.3-2.2-1.3-2.2 1.3-2.2-1.3z" />
       <path d="M7.5 6.75h5M7.5 9.5h5M7.5 12.25h3" />
     </>
+  ),
+
+  // Two overlapping sheets: one record duplicated to the clipboard.
+  copy: (
+    <>
+      <rect x="7.5" y="7.5" width="9.75" height="9.75" rx="1.5" />
+      <path d="M12.75 7.5V4.75a1.5 1.5 0 0 0-1.5-1.5H4.75a1.5 1.5 0 0 0-1.5 1.5v6.5a1.5 1.5 0 0 0 1.5 1.5h2.75" />
+    </>
+  ),
+
+  // A confirming tick, shown briefly in place of the copy icon.
+  check: (
+    <path d="M4 10.5l4 4 8-9" />
   ),
 };
 
